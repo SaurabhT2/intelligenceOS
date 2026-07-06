@@ -8,7 +8,8 @@
     "test": "pnpm -r test",
     "test:coverage": "pnpm -r test:coverage",
     "validate": "pnpm -r typecheck && pnpm --filter @intelligence-os/core check:boundaries",
-    "serve": "pnpm --filter @intelligence-os/core serve",
+    "dev:api": "pnpm --filter @intelligence-os/api dev",
+    "demo": "pnpm --filter @intelligence-os/demo start",
     "clean": "pnpm -r clean"
   },
   "engines": {

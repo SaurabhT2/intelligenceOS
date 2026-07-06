@@ -98,7 +98,7 @@ export type { WorkspaceLearningInput } from './types/domains';
 export { CognitionProviderImpl } from './api/CognitionProviderImpl';
 export type { CognitionProviderImplDeps } from './api/CognitionProviderImpl';
 export { HealthChecker } from './api/HealthChecker';
-export { createCognitionHttpServer } from './api/http/server';
+export { createCognitionHttpServer, createCognitionRequestHandler } from './api/http/server';
 export type { CognitionHttpServerOptions } from './api/http/server';
 export { ContextBuilder } from './context/ContextBuilder';
 

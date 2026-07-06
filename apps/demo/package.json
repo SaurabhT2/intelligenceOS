@@ -1,0 +1,22 @@
+{
+  "name": "@intelligence-os/demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal integration-validation client proving IntelligenceOS can be consumed independently of BrandOS, purely over HTTP. Not a production UI.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@platform/cognition-contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

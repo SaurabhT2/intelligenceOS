@@ -4,6 +4,11 @@
 **Scope:** BrandOS ↔ IntelligenceOS system boundary
 **This document describes where the platform is going, not where it is today.**
 
+> This document is about the *cross-repository* split between BrandOS and
+> IntelligenceOS. For IntelligenceOS's *internal* structure — the
+> `apps/*` (runtimes) vs. `packages/*` (reusable SDK) split within this
+> repository — see `docs/architecture/adr/ADR-002.md`.
+
 ---
 
 ## 1. Vision

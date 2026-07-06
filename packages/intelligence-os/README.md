@@ -86,29 +86,25 @@ pnpm --filter @intelligence-os/core run check:boundaries   # platform boundary r
 
 No `.env`, no live Supabase instance, and no network access are required to typecheck or test — every Supabase call is mocked in the test suite.
 
-## Running the dev HTTP server locally
+## Running the HTTP API locally
 
-`pnpm serve` (`src/dev/serve.ts`) is a separate, dev-only entrypoint that
-exposes `IntelligenceOS.asCognitionProvider()` over the HTTP routes
-BrandOS's `HttpCognitionProvider` calls — see `src/api/http/server.ts`.
-Unlike the library itself, this one script *does* need real
-infrastructure to run, because IntelligenceOS's job is durable brand-
-memory persistence — there's no version of "start the server" that
-doesn't need a real place to persist to:
+This package publishes `createCognitionHttpServer` / `createCognitionRequestHandler`
+(see `src/api/http/server.ts`) as pure, injectable functions — it never reads
+`process.env` or creates its own Supabase client itself (see "Forbidden
+dependencies" in this repo's `AGENT_CONTEXT.md`). Something has to be the
+host application that actually wires those functions up to real
+infrastructure and calls `.listen()`; that's **`apps/api`**, not this
+package.
+
+To run the API locally:
 
 ```bash
-cd packages/intelligence-os
+cd apps/api
 cp .env.example .env   # then fill in your own values
-pnpm serve
+pnpm dev
 ```
 
-`.env.example` documents all three required variables
-(`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `COGNITION_API_KEY`) and one
-optional one (`PORT`, default 4100). `.env` is loaded automatically if
-present; already-set environment variables always take precedence over
-it, so exporting them manually or prefixing the command works exactly the
-same as before — `.env` is a convenience, not a requirement. See
-`Engineering/PLATFORM_INTEGRATION.md` (platform root, sibling to
-`IntelligenceOS-Platform/`) for the full two-repo BrandOS ↔ IntelligenceOS
-local workflow this plugs into, including how `COGNITION_API_KEY` pairs
-with BrandOS's `INTELLIGENCE_OS_API_KEY`.
+See `apps/api/README.md` for the full local-run and deployment story
+(including the Vercel-hosted path at `https://intelligence.saurabhtiwariai.com`),
+and `docs/architecture/adr/ADR-002.md` for why the apps/api boundary exists
+at all instead of a `serve` script living in this package.

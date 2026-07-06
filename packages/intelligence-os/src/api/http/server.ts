@@ -31,7 +31,7 @@
  * subsystem.
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse, type RequestListener } from 'node:http';
 import type {
   CognitionProvider,
   CognitionRequest,
@@ -82,26 +82,40 @@ function isAuthorized(req: IncomingMessage, apiKey: string): boolean {
 }
 
 /**
- * Creates (but does not start) an HTTP server implementing the 5
- * CognitionProvider routes. Call `.listen(port)` on the result.
+ * Builds the request-handling function for the 5 CognitionProvider routes,
+ * without binding it to any transport. This is the part that's actually
+ * "the API": route matching, auth, body parsing, and error-shape mapping.
+ *
+ * Split out from `createCognitionHttpServer` (Milestone 4 — apps/api
+ * introduction) because that function's `createServer(...)` call is only
+ * one of two valid ways to run this handler:
+ *   - a long-lived Node process calls `.listen(port)` on the `Server`
+ *     `createCognitionHttpServer` returns (apps/api's `src/server.ts`,
+ *     or any other persistent host).
+ *   - a per-invocation serverless runtime (e.g. a Vercel Node Function)
+ *     instead calls this handler directly with its own request/response
+ *     objects, which are structurally compatible with Node's
+ *     `IncomingMessage`/`ServerResponse` for every property this handler
+ *     reads or writes (`req.url`, `req.method`, `req.headers`, `req.on`,
+ *     `res.writeHead`, `res.end`) — see apps/api/api/cognition.ts.
+ * This is purely a decomposition of existing behavior: `createCognitionHttpServer`
+ * below still does exactly what it did before, byte for byte. Nothing about
+ * the routes, auth, or response shapes changes.
  *
  * Accepts the CognitionProvider interface, not the concrete
  * CognitionProviderImpl class — this function only ever calls the 5
  * interface methods (resolveCognitionContext, observe, review,
  * summarizeCognition, checkHealth), so any conforming implementation
  * works, including IntelligenceOS.asCognitionProvider()'s return value
- * and test doubles. (Previously typed to CognitionProviderImpl
- * specifically; caught as a real typecheck failure once
- * src/dev/serve.ts — new in the Milestone 3+ Engineering Workflow Audit —
- * became the first caller to pass a plain CognitionProvider-typed value.)
+ * and test doubles.
  */
-export function createCognitionHttpServer(
+export function createCognitionRequestHandler(
   provider: CognitionProvider,
   options: CognitionHttpServerOptions,
-) {
+): RequestListener {
   const logger = options.logger ?? console;
 
-  return createServer(async (req, res) => {
+  return async (req, res) => {
     try {
       if (!isAuthorized(req, options.apiKey)) {
         sendJson(res, 401, { error: 'unauthorized' });
@@ -165,5 +179,21 @@ export function createCognitionHttpServer(
       logger.error('[cognition-http] unhandled error:', err);
       sendJson(res, 500, { error: 'internal error' });
     }
-  });
+  };
+}
+
+/**
+ * Creates (but does not start) an HTTP server implementing the 5
+ * CognitionProvider routes. Call `.listen(port)` on the result.
+ *
+ * Unchanged public signature and behavior — this is now a thin wrapper
+ * around `createCognitionRequestHandler` (see that function's docblock
+ * for why the split exists). Existing callers (apps/api's traditional
+ * server bootstrap, this package's own tests) are unaffected.
+ */
+export function createCognitionHttpServer(
+  provider: CognitionProvider,
+  options: CognitionHttpServerOptions,
+) {
+  return createServer(createCognitionRequestHandler(provider, options));
 }
