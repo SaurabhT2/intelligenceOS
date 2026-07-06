@@ -1,0 +1,18 @@
+{
+  "name": "intelligence-os-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage",
+    "validate": "pnpm -r typecheck && pnpm --filter @intelligence-os/core check:boundaries",
+    "serve": "pnpm --filter @intelligence-os/core serve",
+    "clean": "pnpm -r clean"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

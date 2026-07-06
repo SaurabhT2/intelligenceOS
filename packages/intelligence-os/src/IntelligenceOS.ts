@@ -1,0 +1,353 @@
+/**
+ * IntelligenceOS.ts
+ *
+ * Root class. The platform's primary entry point for any consumer.
+ *
+ * Source: BrandOS_IntelligenceOS_Architecture.md, Sections 2.1 and 10.2.
+ *
+ * Epic 2 (Platform Publication): this class now formally `implements
+ * IIntelligenceProvider` (see ./IIntelligenceProvider.ts) — a compile-time
+ * guarantee that its public surface and the platform's published provider
+ * contract never drift apart. A consumer that wants to program against the
+ * interface rather than this concrete class can use IntelligenceOSProvider
+ * (./compat/IntelligenceOSProvider.ts) instead — same behaviour, interface-typed.
+ *
+ * Public API surface (4 methods, fixed for all sprints):
+ *   buildBlueprint()        — Sprint 1 (Blueprint Assembly)
+ *   recordFeedbackEvent()   — Sprint 0 (write path), Sprint 2 (pipeline trigger)
+ *   ingestKnowledgeAsset()  — Sprint 3 (Onboarding Intelligence)
+ *   upsertProject()         — Sprint 0 (write path)
+ *
+ * Sprint 0 behaviour:
+ *   buildBlueprint()        → throws PhaseNotImplementedError
+ *   recordFeedbackEvent()   → persists to feedback_events + emits event (REAL)
+ *   ingestKnowledgeAsset()  → throws PhaseNotImplementedError
+ *   upsertProject()         → upserts intelligence.projects + emits event (REAL)
+ */
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { ArtifactRequest, ArtifactBlueprint, FeedbackEvent } from '@intelligence-os/shared-types';
+import type { IntelligenceSummary } from '@intelligence-os/shared-types';
+import type { IntelligenceEventBus } from './events/IntelligenceEventBus';
+import type { KnowledgeAssetInput, ProjectInput } from './types/domains';
+import type { IIntelligenceProvider } from './IIntelligenceProvider';
+import type { CognitionProvider } from '@platform/cognition-contract';
+
+import { InProcessEventBus } from './events/IntelligenceEventBus';
+import { UserIntelligenceDomain } from './domains/UserIntelligenceDomain';
+import { ProjectIntelligenceDomain } from './domains/ProjectIntelligenceDomain';
+import { ArtifactIntelligenceDomain } from './domains/ArtifactIntelligenceDomain';
+import { KnowledgeIntelligenceDomain } from './domains/KnowledgeIntelligenceDomain';
+import { RelationshipIntelligenceDomain } from './domains/RelationshipIntelligenceDomain';
+import { WorkspaceIntelligenceDomain } from './domains/WorkspaceIntelligenceDomain';
+import { BlueprintBuilder } from './blueprint/BlueprintBuilder';
+import { FeedbackProcessor } from './pipeline/FeedbackProcessor';
+import { KnowledgeProcessor } from './knowledge/KnowledgeProcessor';
+import { CognitionProviderImpl } from './api/CognitionProviderImpl';
+import { HealthChecker } from './api/HealthChecker';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+
+export interface IntelligenceOSConfig {
+  /**
+   * A Supabase client initialised with the SERVICE ROLE key.
+   * Intelligence OS needs the service role to bypass RLS and write to
+   * the intelligence schema on behalf of users.
+   *
+   * Source: Architecture Section 10.2.
+   *
+   * ⚠️  Never expose this client to the browser. It belongs only in the
+   *     consumer's server / API layer.
+   */
+  supabase: SupabaseClient;
+
+  /**
+   * Event bus implementation. Defaults to InProcessEventBus (synchronous,
+   * in-memory, suitable for development and testing). Swap to BullMQEventBus
+   * or InngestEventBus for production (Sprint 4, consumer integration).
+   */
+  eventBus?: IntelligenceEventBus;
+}
+
+// ── Root class ────────────────────────────────────────────────────────────────
+
+export class IntelligenceOS implements IIntelligenceProvider {
+  /** @internal — accessed directly by tests via the `domains` accessor */
+  readonly domains: {
+    user:         UserIntelligenceDomain;
+    project:      ProjectIntelligenceDomain;
+    artifact:     ArtifactIntelligenceDomain;
+    knowledge:    KnowledgeIntelligenceDomain;
+    relationship: RelationshipIntelligenceDomain;
+    workspace:    WorkspaceIntelligenceDomain;
+  };
+
+  private readonly bus:               IntelligenceEventBus;
+  private readonly blueprintBuilder:  BlueprintBuilder;
+  private readonly feedbackProcessor: FeedbackProcessor;
+  private readonly knowledgeProcessor: KnowledgeProcessor;
+  private readonly supabase:          SupabaseClient;
+  /** Lazily constructed — most consumers (e.g. BrandOS-facing HTTP deployment)
+   *  will want it; others (pure buildBlueprint()/recordFeedbackEvent() callers)
+   *  never touch it, so it isn't built eagerly in the constructor. */
+  private cognitionProvider: CognitionProvider | undefined;
+
+  constructor(config: IntelligenceOSConfig) {
+    this.supabase = config.supabase;
+    this.bus = config.eventBus ?? new InProcessEventBus();
+
+    this.domains = {
+      user:         new UserIntelligenceDomain(config.supabase),
+      project:      new ProjectIntelligenceDomain(config.supabase),
+      artifact:     new ArtifactIntelligenceDomain(config.supabase),
+      knowledge:    new KnowledgeIntelligenceDomain(config.supabase),
+      relationship: new RelationshipIntelligenceDomain(config.supabase),
+      workspace:    new WorkspaceIntelligenceDomain(config.supabase),
+    };
+
+    this.blueprintBuilder = new BlueprintBuilder(
+      {
+        user:      this.domains.user,
+        project:   this.domains.project,
+        artifact:  this.domains.artifact,
+        knowledge: this.domains.knowledge,
+        workspace: this.domains.workspace,
+      },
+      this.bus,
+    );
+
+    // Sprint 2: wire Learning Pipeline. FeedbackProcessor subscribes to
+    // 'intelligence.artifact.feedback' and drives the full Signal → Profile flow.
+    this.feedbackProcessor = new FeedbackProcessor(config.supabase, this.bus);
+    this.feedbackProcessor.register();
+
+    // Sprint 3: wire Knowledge Intelligence. KnowledgeProcessor subscribes to
+    // 'intelligence.knowledge_asset.uploaded' and drives the extraction pipeline.
+    this.knowledgeProcessor = new KnowledgeProcessor(config.supabase, this.bus);
+    this.knowledgeProcessor.register();
+  }
+
+  /**
+   * Called before artifact generation.
+   * Returns a fully populated ArtifactBlueprint.
+   *
+   * LIVE — Sprint 1 (Blueprint Assembly).
+   * Always returns a blueprint, even for brand-new users with no intelligence.
+   */
+  async buildBlueprint(request: ArtifactRequest): Promise<ArtifactBlueprint> {
+    return this.blueprintBuilder.build(request);
+  }
+
+  /**
+   * Called after artifact delivery/publish.
+   * Persists the feedback event to `intelligence.feedback_events` immediately,
+   * then emits `intelligence.artifact.feedback` on the event bus for async
+   * pipeline processing (Sprint 2 Learning Pipeline subscribes to this).
+   *
+   * Returns immediately — pipeline processing is fully asynchronous.
+   *
+   * REAL in Sprint 0 (write path live).
+   * PIPELINE ACTIVATION in Sprint 2 (FeedbackProcessor subscribes to the event).
+   */
+  async recordFeedbackEvent(event: FeedbackEvent): Promise<void> {
+    // Persist synchronously (audit trail, correlates with blueprint_ref).
+    await this.domains.artifact.recordFeedbackEvent(event);
+
+    // Emit for async pipeline processing. Sprint 2+ subscribes here.
+    await this.bus.emit('intelligence.artifact.feedback', {
+      ...event,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Called at user onboarding or when a knowledge asset is uploaded.
+   * Returns the persisted asset id; extraction runs synchronously in Phase 1
+   * (Sprint 3) and fully via the event bus in Sprint 4.
+   *
+   * LIVE — Sprint 3 (Knowledge Intelligence).
+   * Requires: KnowledgeProcessor, which drives the full extraction pipeline:
+   *   KnowledgeAssetExtractor → VocabularyExtractor → FrameworkExtractor
+   *   → PatternExtractor → KnowledgeValidator → persisted KnowledgeAsset
+   *
+   * @param asset   The knowledge asset input (required).
+   * @param rawContent  The raw text content of the asset. Optional in the public
+   *                    API — if omitted, the asset is persisted with low confidence
+   *                    and the event-driven extraction path is used when Sprint 4
+   *                    adds content retrieval from storage.
+   */
+  async ingestKnowledgeAsset(
+    asset: KnowledgeAssetInput,
+    rawContent = '',
+  ): Promise<string> {
+    const assetId = crypto.randomUUID();
+
+    // Run the extraction pipeline synchronously (Phase 1).
+    // Sprint 4 will move this behind the event bus (async queue).
+    await this.knowledgeProcessor.process(asset, rawContent, assetId);
+
+    // Emit the knowledge_asset.uploaded event so any additional bus subscribers
+    // (e.g. observability consumers) receive notification.
+    await this.bus.emit('intelligence.knowledge_asset.uploaded', {
+      userId:        asset.userId ?? '',
+      assetId,
+      ownerType:     asset.ownerType,
+      projectId:     asset.projectId ?? null,
+      workspaceId:   asset.workspaceId ?? null,
+      assetType:     asset.assetType,
+      title:         asset.title,
+      sourceFileRef: asset.sourceFileRef ?? '',
+      occurredAt:    new Date().toISOString(),
+    });
+
+    return assetId;
+  }
+
+  /**
+   * Called when a consumer-side project is created or updated.
+   * Upserts the intelligence-side project record and emits
+   * `intelligence.project.created` (idempotent — safe to call on every sync).
+   * Returns the intelligence project id.
+   *
+   * REAL in Sprint 0.
+   */
+  async upsertProject(input: ProjectInput): Promise<string> {
+    const id = await this.domains.project.upsertProject(input);
+
+    await this.bus.emit('intelligence.project.created', {
+      userId: input.userId,
+      projectId: id,
+      brandosProjectId: input.brandosProjectId ?? null,
+      name: input.name,
+      projectType: input.projectType ?? null,
+      lifecycleState: input.lifecycleState ?? 'IDEATION',
+      occurredAt: new Date().toISOString(),
+    });
+
+    return id;
+  }
+
+  // ── E1-1: Human Learning Review API ────────────────────────────────────────
+
+  /**
+   * Transitions a FLAGGED learning to ACTIVE (approved=true) or
+   * ARCHIVED (approved=false). Represents supervisory review of a
+   * machine-proposed signal by an authorised reviewer.
+   *
+   * State transition: FLAGGED → ACTIVE | FLAGGED → ARCHIVED
+   *
+   * Throws EntityNotFoundError when learningId does not exist.
+   * Throws ValidationError when the learning belongs to a different userId.
+   * Emits `intelligence.learning.reviewed` on success.
+   *
+   * Source: Engineering Roadmap E1-1.
+   */
+  async reviewLearning(
+    userId: string,
+    learningId: string,
+    approved: boolean,
+    reviewedBy: string,
+  ): Promise<void> {
+    const { newState } = await this.domains.user.reviewLearning(
+      userId, learningId, approved, reviewedBy,
+    );
+
+    await this.bus.emit('intelligence.learning.reviewed', {
+      userId,
+      learningId,
+      approved,
+      reviewedBy,
+      newState,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  // ── E1-3: Brand Summary Query API ──────────────────────────────────────────
+
+  /**
+   * Returns a summary of the intelligence available for a user (and
+   * optionally a workspace). Used by workspace settings UI and diagnostics.
+   *
+   * Always succeeds — returns a degraded summary when no profile exists.
+   *
+   * Source: Engineering Roadmap E1-3.
+   */
+  async getBrandSummary(params: {
+    userId: string;
+    workspaceId?: string;
+  }): Promise<IntelligenceSummary> {
+    const { userId, workspaceId } = params;
+
+    const [profile, archetype, activeLearningsCount, topTaxonomyCategories] =
+      await Promise.all([
+        this.domains.user.getCurrentProfile(userId).catch(() => null),
+        this.domains.user.getCurrentArchetype(userId).catch(() => null),
+        this.domains.user.countActiveLearnings(userId, workspaceId).catch(() => 0),
+        this.domains.user.getTopTaxonomyCategories(userId, 3).catch(() => [] as string[]),
+      ]);
+
+    if (!profile) {
+      return {
+        compositeConfidence:   0,
+        archetypePrimary:      null,
+        archetypeConfidence:   null,
+        activeLearningsCount,
+        topTaxonomyCategories,
+        voiceSummary:          null,
+        degraded:              true,
+      };
+    }
+
+    return {
+      compositeConfidence:   profile.compositeConfidence,
+      archetypePrimary:      archetype?.archetypeType ?? profile.archetypePrimary ?? null,
+      archetypeConfidence:   archetype?.confidence    ?? profile.archetypeConfidence ?? null,
+      activeLearningsCount,
+      topTaxonomyCategories,
+      voiceSummary:          profile.voiceSummary,
+      degraded:              false,
+    };
+  }
+
+  /**
+   * Exposes the event bus so any consumer can subscribe to Intelligence OS
+   * pipeline events (e.g. intelligence.profile.updated, intelligence.blueprint.built).
+   *
+   * Source: Architecture Section 10.2 (observable pipeline events).
+   */
+  get eventBus(): IntelligenceEventBus {
+    return this.bus;
+  }
+
+  // ── Milestone 2: CognitionProvider ───────────────────────────────────────
+  //
+  // Returns this IntelligenceOS instance's implementation of
+  // `CognitionProvider` (`@platform/cognition-contract`) — the interface
+  // BrandOS actually consumes. Distinct from `IIntelligenceProvider` above:
+  // that is Epic 2's own public platform surface (buildBlueprint,
+  // recordFeedbackEvent, ...); this is the separate, narrower cross-platform
+  // contract with BrandOS specifically. Both are valid, coexisting public
+  // surfaces of the same underlying domains — see the Milestone 2 report,
+  // "Architecture Implemented," for why keeping both was the right call
+  // rather than a contract violation.
+  //
+  // Composed from the SAME domain instances (`this.domains.workspace`,
+  // `this.domains.user`) already constructed above — no second set of
+  // domain objects, no duplicated Supabase clients.
+
+  /**
+   * Returns the `CognitionProvider` implementation for this instance,
+   * constructing it on first access. Pass to `createCognitionHttpServer`
+   * (`./api/http/server.ts`) to expose it over HTTP for BrandOS.
+   */
+  asCognitionProvider(): CognitionProvider {
+    if (!this.cognitionProvider) {
+      this.cognitionProvider = new CognitionProviderImpl({
+        workspace: this.domains.workspace,
+        user: this.domains.user,
+        health: new HealthChecker(this.supabase),
+      });
+    }
+    return this.cognitionProvider;
+  }
+}

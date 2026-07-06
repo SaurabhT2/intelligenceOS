@@ -1,0 +1,215 @@
+# ADR-001 — Visual Intelligence: Domain Status
+
+**Status:** Decided
+**Decision:** **OPTION B** — Visual Intelligence should remain part of existing domains. It does not become a first-class IntelligenceOS domain.
+
+---
+
+## 0. A correction to this review's premise, made before anything else
+
+This review's background section states that "previous analysis" identified BrandOS's visual identity concept and that the question of whether it's an omission is open. Both the repository's actual `foundations/` documents and the standing five-deliverable onboarding system referenced at the top of this task already address this question directly, in detail, and reach a documented conclusion — they don't leave it open.
+
+Specifically: `foundations/BrandOS_Intelligence_Semantics_Analysis.md` contains a full semantic analysis of BrandOS's visual identity system (Deliverables 1–8), independently corroborated by `foundations/Intelligence_Ownership_Audit.docx`'s capability-transfer tables. Both documents reach the same conclusion this ADR reaches below, by a different and independently-arrived-at route. This ADR's job is therefore not to answer the question from a blank slate, but to **verify that prior conclusion under first-principles scrutiny**, surface anything it missed, and produce the formal record plus the targeted documentation updates the review explicitly asks for. Where this ADR's reasoning and the prior analysis agree, that agreement is itself evidence — two independent passes converging on the same architecture is a stronger signal than either pass alone. Where this ADR adds something the prior analysis didn't cover, it's called out explicitly in §9.
+
+---
+
+## 1. Semantics — what is Visual Intelligence, actually?
+
+Stripped of BrandOS's specific implementation, "Visual Intelligence" as posed by this review bundles together several genuinely different kinds of knowledge:
+
+| What's actually being asked about | Is it really about *visuals*, or about something else wearing a visual costume? |
+|---|---|
+| Color palette, typography choices, motion personality | A **style preference**, expressed in a visual register instead of a verbal one. Structurally identical in role to "writes in short punchy sentences" — both are durable facts about *how this person/brand expresses itself*, just on different channels. |
+| Layout philosophy, information hierarchy, composition | A **structural preference**, expressed visually. Structurally identical in role to "always opens with a numbered list" — both are facts about *how content gets organized*, on different channels. |
+| Brand mood, illustration/photography style | A blend of style preference and **declared identity** (the "what does this brand feel like" question text-voice already asks and answers via `Archetype`/declared persona fields). |
+| Accessibility preferences | A **constraint**, expressed visually (analogous to "must include a compliance disclaimer" — a hard requirement, not an evolving taste). |
+| Component usage, design-system conformance | **Workspace-level governance**, expressed visually — exactly parallel to a workspace's declared style floor for text. |
+
+The honest answer to "is Visual Intelligence a distinct intelligence domain" is: **no — it's a distinct *modality*, applied across several domains that already exist.** This is the same relationship "writing in English vs. writing in Spanish" has to `UserIntelligenceDomain` — language is a real, consequential dimension of how content gets generated, but nobody would propose a `LanguageIntelligenceDomain`, because language is an *attribute that cuts across* identity, structure, and audience, not a fifth kind of knowledge sitting beside them. Visual information is the same shape of thing: a channel, not a domain.
+
+### 1.1 — Differentiation from the four named comparison domains
+
+- **vs. Brand Voice** (the text-style learnings currently modeled as `Learning` rows under `UserIntelligenceDomain`): not different in kind at all. Both are durable, evolvable, confidence-bearing facts about how a specific person or brand expresses itself, differing only in which channel (text vs. visual) the expression happens through. A `Learning` row with `taxonomyCategory: 'writing_style'` and a hypothetical visual-equivalent learning have identical lifecycle semantics — confidence, decay, corroboration, contradiction — they differ in *payload*, not in *mechanism*.
+- **vs. Artifact Intelligence**: genuinely complementary, not competing. `ArtifactPattern`/`ArtifactExemplar` already model artifact-type-specific structural defaults (the three-tier `universal → archetype → user_calibrated` hierarchy). Visual structural defaults (e.g., "decks for this archetype default to a two-column layout") are a natural *extension of the existing fields* on these entities, not a reason to introduce a parallel structure.
+- **vs. Workspace Intelligence**: visual governance (a shared brand color system, a mandated component library) is exactly the same kind of fact as a shared compliance disclaimer requirement or a workspace-wide banned-phrase list — both are declared, non-decaying floors that `WorkspaceIntelligenceDomain.getContext()`'s `complianceConstraints` mechanism already exists to hold.
+- **vs. Knowledge Intelligence**: an uploaded brand-guidelines PDF or a Figma export is, mechanically, identical to an uploaded playbook or framework document — both are `KnowledgeAsset` rows with `sourceFileRef` provenance and an extraction pipeline behind them. The only real difference is which extractor needs to run (visual feature extraction vs. text pattern extraction), which is an extractor-design question, not a domain-design question.
+
+**Conclusion on semantics:** Visual Intelligence is not a fifth or seventh kind of knowledge. It's the same knowledge IntelligenceOS already models — identity, structure, governance, reference material — expressed through a channel the current extractors don't yet read. The question this review should actually be settling is "does IntelligenceOS need a visual-feature extractor," not "does IntelligenceOS need a Visual Intelligence domain." Those are different, and conflating them is the central risk in this review's framing.
+
+---
+
+## 2. Learning Model
+
+What visual intelligence would actually need to learn, mapped onto the existing taxonomy rather than invented fresh:
+
+| Learning | Existing taxonomy fit | Notes |
+|---|---|---|
+| Color systems, typography | `personal_brand_signal` (closest existing `TaxonomyCategory` value) or a new value added to the existing 25-member enum | This is the one place a small, additive change to the taxonomy is genuinely warranted — see §5. Not a new domain; a new *category value* within the domain that already owns style learnings. |
+| Layout/composition/information hierarchy preferences | `formatting`-adjacent — maps to the same conceptual slot as BrandOS's `format preference` (already mapped to `UserIntelligenceDomain` per the prior semantic analysis), and to `ArtifactPattern.sections` at the artifact-type level | No new category needed; existing structural-preference modeling already generalizes. |
+| Motion personality, brand mood | `personal_brand_signal` | Soft, evolvable, low-stakes if wrong — fits the existing decay/confidence machinery for this category directly. |
+| Accessibility preferences | `constraints_and_boundaries` | This is structurally a constraint, not a style — should never be modeled as a decaying `Learning` at all, the same reasoning Deliverable 8 (E1-2) already applied to workspace compliance requirements. |
+| Component usage, design-system conformance | `WorkspaceIntelligenceDomain`'s `complianceConstraints`, parallel to declared text-style floors | Declared, non-decaying, workspace-scoped. |
+| Illustration/photography style | `personal_brand_signal` | Same as motion/mood. |
+
+There is no learning in this list that doesn't already have a home. The "complete learning model" the review asks for is: **the existing model, applied to a channel it doesn't currently extract from** — not a parallel model.
+
+---
+
+## 3. Evidence Model
+
+| Evidence source | Existing IntelligenceOS mechanism it fits | What's actually missing |
+|---|---|---|
+| Uploaded designs, brand guidelines, design systems, Figma exports, logos, templates | `KnowledgeAsset` via `KnowledgeIntelligenceDomain`/`KnowledgeProcessor` | A visual-feature extractor (color/typography/layout detection) parallel to the existing `VocabularyExtractor`/`FrameworkExtractor`/`PatternExtractor`. The asset-ingestion pathway, confidence model, versioning (`version`/`isCurrent`), and validator are all already built and channel-agnostic. |
+| Generated artifacts (visual ones — decks, designed documents) | `ArtifactExemplar.structuralSnapshot`, exactly as already used for text-artifact structural promotion | Extending `structuralSnapshot`'s shape to optionally carry visual properties, not a new promotion mechanism. |
+| Human edits to a generated visual artifact | `FeedbackEvent.editDiff` | Already typed and waiting for a real producer (per the prior semantic analysis's evolution-opportunities section) — this is a gap that exists for *all* edit evidence, text or visual, not a visual-specific gap. |
+| Screenshots, websites, PowerPoint decks (as reference material rather than generated output) | `KnowledgeAsset` with `sourceFileRef` provenance | Same extractor gap as the first row. |
+
+**Confidence, permanence, versioning, decay, contradiction** — all six properties the review asks about are already specified, channel-agnostically, in the existing model:
+- **Confidence ceilings** by source quality (`explicit_statement` / `demonstrated_behavior` / `uploaded_artifact` / `inferred`) apply identically regardless of whether the observation came from a sentence or a color swatch.
+- **Permanence**: color/typography systems should sit closer to `stabilityClass: 'permanent'` (a brand's primary palette is closer to a fact than a taste), while mood/motion should sit at `'long_term'` — exactly mirroring how `named_framework` and `tone_pattern` already get different stability classes today within the same taxonomy.
+- **Versioning**: `KnowledgeAsset.version`/`isCurrent` already gives this for free for uploaded reference material; `Learning.state` already gives this for inferred style facts.
+- **Decay**: should follow the same `stabilityClass`-driven decay rules already implemented in `ObservationBuilder`/`ProfileBuilder` — no new decay mechanism needed.
+- **Contradiction**: a brand's logo update or rebrand is exactly the kind of event `Hypothesis.highQualityContradictions` already exists to represent (a newer high-quality signal disputing an established `Learning`) — this is, again, the same mechanism the prior semantic analysis recommended for text-domain substantive-claim contradiction (domain position, market narrative), applied to a visual fact instead.
+
+**Conclusion on evidence:** every property the review asks IntelligenceOS to "determine" for visual evidence is already determined, generically, for evidence in general. The genuinely new work is narrower than the review implies: one or more new extractors, not a new evidence model.
+
+---
+
+## 4. Domain Analysis — the actual decision
+
+### The test that settles it
+
+A new first-class domain is warranted when a body of knowledge has **ownership boundaries, lifecycle rules, or query patterns that don't fit any existing domain's existing rules** — not merely when it covers a new subject-matter area. Applying that test:
+
+- **Ownership**: every visual learning identified in §2 maps cleanly onto `UserIntelligenceDomain` (style/identity), `WorkspaceIntelligenceDomain` (governance), `ArtifactIntelligenceDomain` (structural patterns), or `KnowledgeIntelligenceDomain` (reference material) — using the *same* tables, the *same* row shapes, the *same* confidence/decay machinery those domains already define. There is no visual fact in this analysis that needs a table none of the six existing domains can own.
+- **Lifecycle rules**: nothing about color/typography/layout/motion/mood needs a different state machine than `Learning.state` already provides, or different versioning than `KnowledgeAsset.version`/`isCurrent` already provides.
+- **Query patterns**: `BlueprintBuilder` would consume visual guidance exactly the way it already consumes text-voice guidance — read the relevant domain, attach the result to the existing `NarrativeFrame`/structural output, no new query shape required (see §6).
+
+A seventh domain would therefore introduce a boundary that doesn't track any real difference in how this knowledge behaves — it would be a domain organized by *subject matter* (visual vs. textual) rather than by *ownership and lifecycle*, which is the organizing principle every one of the other six domains in this codebase actually follows. `KnowledgeIntelligenceDomain` doesn't have a sibling `TextKnowledgeIntelligenceDomain`/`ImageKnowledgeIntelligenceDomain` split by content type — it's one domain because "uploaded reference material" is one ownership concern regardless of what's inside the file. The same logic applies here.
+
+### What a seventh domain would cost, concretely
+
+- A new table set (or a parallel shadow of existing tables) that every future contributor has to learn is "the same as `Learning`/`KnowledgeAsset`, but for visuals" — a maintenance burden with no corresponding new capability, since the capability (decay, confidence, versioning, contradiction) already exists.
+- A new entry in every architectural rule that currently enumerates "the six domains" (Bootstrap §5/§10, every `AGENT_CONTEXT.md`'s dependency rules, the generated `domain_boundary_audit.generated.json`'s ownership map) — multiplying the surface area of rules that need to stay synchronized, for a domain whose actual write patterns would mirror `UserIntelligenceDomain`'s almost exactly.
+- A second place `BlueprintBuilder` has to fail-soft-fetch from in Step 1 of blueprint assembly, for data that — per §6 below — ultimately needs to land in the *same* `NarrativeFrame`/structural output the existing fetches already populate.
+
+### What staying inside existing domains costs
+
+Comparatively little: a small, additive taxonomy change (§5), new extractor classes inside the existing `knowledge/` pipeline (parallel to, not replacing, the existing three extractors), and field additions to existing entities (`ArtifactPattern`, `ArtifactBlueprint`'s sub-types) rather than new entities.
+
+### Decision
+
+**OPTION B.** Visual Intelligence is a real, valuable learning capability — the prior semantic analysis is right that BrandOS's dormant `IVisualIdentity`/`IdentityVersionRecord` design represents genuine, well-specified intent worth building toward. But the capability belongs **inside** `UserIntelligenceDomain`, `WorkspaceIntelligenceDomain`, `ArtifactIntelligenceDomain`, and `KnowledgeIntelligenceDomain` — as new taxonomy values, new extractor stages, and new fields on existing entities — not as a seventh domain. This is not a smaller or lesser version of the capability; it's the same capability, correctly scoped to where IntelligenceOS's existing ownership and lifecycle rules already explain how it should behave.
+
+---
+
+## 5. Repository Impact (given OPTION B)
+
+This is deliberately a short list, because Option B's entire point is that most of the machinery already exists.
+
+| Area | Change |
+|---|---|
+| **Domain model** | No new domain. Add `'visual_identity'` (or similarly named) to the existing 25-value `TaxonomyCategory` union in `types/entities.ts`, with a `stabilityClass` mapping consistent with §3 (lean `permanent` for palette/typography, `long_term` for mood/motion) added to `ObservationBuilder.stabilityClassFor()`'s existing switch. |
+| **Entities** | No new entities. Extend `ArtifactPattern` (or its `sections`/`narrativeModel` sub-shape) with an optional visual-structure field, used only by artifact types where it's meaningful (decks, designed documents) — left absent/default for purely textual artifact types. Extend `ArtifactExemplar.structuralSnapshot` similarly. |
+| **Events** | One new event type for "visual knowledge asset uploaded/analyzed" if the extraction is async (mirroring the existing `knowledge_asset.uploaded` pattern) — not a new event *category*, an additional member of the existing `IntelligenceEventType` union. (Note: per the Bootstrap's Gap Analysis G-1, this should use the already-recommended neutral naming, e.g. `knowledge_asset.visual_analyzed`, not a `brandos.*`-prefixed name.) |
+| **Learning Pipeline** | No structural change. `SignalExtractor`/`ObservationBuilder` need a new `SourceQuality` consideration if visual signals arrive with different reliability characteristics than text (e.g., a VLM-derived description should probably sit below `uploaded_artifact`'s confidence ceiling, closer to `inferred`, since it's a model's interpretation of an asset rather than the asset's literal declared content — flagged but not resolved by the prior semantic analysis's evidence model, Deliverable 3). |
+| **Blueprint Pipeline** | See §6 below — this is the one area with a real, specific integration design decision, not just a mechanical extension. |
+| **Knowledge Pipeline** | **The one genuinely new component**: a `VisualFeatureExtractor` (or similarly named) class added to `knowledge/`, parallel to `VocabularyExtractor`/`FrameworkExtractor`/`PatternExtractor`, producing a structured result (the equivalent of `VocabularyExtractionResult`) rather than collapsing color/typography/mood into a single free-text blob — directly following the design correction the prior semantic analysis already specified for BrandOS's `E1-4` bridge (Deliverable 8). Whether this extractor does heuristic feature detection (palette extraction from an image, font-metadata parsing) or calls an external vision model is a real design decision the Bootstrap's Implementation Philosophy (§12) flags as needing design review before any pipeline component calls an external model — this decision should be made explicitly, not defaulted into, when the extractor is actually built. |
+| **Storage** | No new tables. `intelligence.knowledge_assets`'s existing `extracted_patterns`/`extracted_frameworks` JSONB columns, or a new sibling `extracted_visual_features` JSONB column on the same table, hold the new extractor's output — schema.sql gets one additive column, not a new table family. |
+| **Package structure** | No change. The new extractor lives in `packages/intelligence-os/src/knowledge/`, the existing package. |
+| **Public interfaces** | No change to the four-method `IntelligenceOS` public surface (Architectural Rule 7 is preserved exactly). `ingestKnowledgeAsset()` already accepts an `assetType`; a visual asset type is a new enum value passed through the existing method, not a new method. |
+| **Tests** | New unit tests for the new extractor (in `tests/unit/knowledge/`, alongside the existing extractor tests — see `intelligence-os-knowledge/AGENT_CONTEXT.md`'s existing testing-expectations guidance, which already anticipates new extractors needing exact-match deterministic assertions). No new integration-test *file* needed — the existing `tests/integration/blueprint.test.ts` and `intelligence-os.test.ts` gain new scenarios, not new files. |
+
+---
+
+## 6. Blueprint Integration
+
+**The correct integration point:** visual guidance is consumed at exactly the same point text-voice guidance is — inside `NarrativePlanner`'s synthesis step, reading from the same already-loaded profile/project-context/audience-calibration data `BlueprintBuilder`'s Step 1 fetches, with no new fetch, no new pipeline stage, and no new step in the assembly sequence.
+
+Concretely, against the existing `ArtifactBlueprint` shape:
+- **Layout guidance, visual hierarchy, component selection** → an additive field on `BlueprintSection` (parallel to how a section already carries structural/depth guidance for text), populated by `StructurePlanner` reading the same `ArtifactPattern` it already resolves, once that pattern carries the §5 visual-structure extension.
+- **Color guidance, typography guidance, design-principle guidance** → an additive field on `NarrativeFrame` (or a small new sub-type alongside `VoiceDirectives`/`VocabularyDirectives` — a `VisualDirectives`, mirroring those two existing sibling types' shape exactly), populated by `NarrativePlanner` reading the visual-flavored `Learning`s from `UserIntelligenceDomain`.
+
+**Why this integration point and not a new pipeline step:** `BlueprintBuilder.build()`'s guarantee (§8 of the Bootstrap — always returns a usable blueprint) is currently satisfied because every step degrades to a documented default. Adding a *new pipeline step* for visual guidance means a new fail-soft path to design and test; adding a *new field, populated inside an existing step*, inherits that step's existing fail-soft behavior for free — if `NarrativePlanner` already defaults gracefully when profile data is thin, a new `VisualDirectives` field defaults gracefully the same way, with no new code path to verify. This is the same reasoning §4 used against a new domain, applied one layer down: integrate at the point that already has the right failure semantics, rather than building a parallel point that needs them rebuilt.
+
+For artifact types where visual guidance is irrelevant (most text artifacts), the new fields are simply absent/null — exactly how `projectContext` is already optional on `ArtifactBlueprint` today for requests with no `projectId`.
+
+---
+
+## 7. Knowledge Model
+
+The review offers `Signal → Observation → Hypothesis → Learning → Visual Profile → Blueprint` as an example alternative pipeline. **Reject the "Visual Profile" step specifically** — it's the one place the review's proposed model would introduce real, unwarranted duplication.
+
+The correct model is the **existing** one, unmodified in shape:
+
+```
+Signal (from a visual-feature extractor, instead of from SignalExtractor's text-classification path)
+   ↓
+Observation (same ObservationBuilder, same confidence-ceiling logic, new SourceQuality
+             consideration for VLM-derived vs. directly-measured visual facts — see §5)
+   ↓
+Hypothesis (same HypothesisEngine, same corroboration/contradiction state machine —
+            a rebrand changing color schemes is a contradiction event exactly like
+            a brand reversing a stated market position)
+   ↓
+Learning (same LearningValidator, taxonomyCategory: 'visual_identity' or similar,
+          stabilityClass leaning 'permanent'/'long_term' per §3)
+   ↓
+IntelligenceProfile (the SAME profile — not a separate "Visual Profile."
+                     ProfileBuilder already synthesizes active Learnings across
+                     every taxonomy category into one versioned object;
+                     visual learnings are additional rows it already knows
+                     how to fold in, not a second object to keep in sync)
+   ↓
+ArtifactBlueprint (via NarrativePlanner/StructurePlanner, per §6)
+```
+
+A separate "Visual Profile" object would face exactly the cross-domain-conflict problem `ConflictResolutionModel` already exists to solve for text (e.g., a workspace's compliance-mandated color scheme vs. a user's personal palette preference) — and solving that problem twice, once for text-flavored conflicts and once for visual-flavored conflicts, with two separate authority orderings to keep consistent, is a clear case of the same anti-pattern §4 already rejected: splitting by subject matter instead of by ownership and lifecycle, which here would mean splitting a conflict-resolution mechanism that doesn't actually need splitting.
+
+---
+
+## 8. Documentation Impact
+
+Per the review's own instruction to "update only what is necessary," the following are the actual, scoped edits — not a broader rewrite:
+
+| Document | Required change |
+|---|---|
+| `foundations/BrandOS_Intelligence_Semantics_Analysis.md` | **No change required.** This document already reaches the same conclusion (Deliverables 5, 6, 8) this ADR reaches, in more granular detail. Cross-reference this ADR from it (a one-line pointer) rather than editing its substantive content. |
+| `foundations/Intelligence_Ownership_Audit.docx` | **No change required.** Its visual-asset row (Table 9: "Add `VisualKnowledgeExtractor` stage to knowledge pipeline... or emit a `brandos.brand_asset.analyzed` event") already independently specifies the extractor-stage approach this ADR confirms. No contradiction to resolve. |
+| `IntelligenceOS_Engineering_Roadmap.md` | Add a line item for the `VisualFeatureExtractor` (§5) under whichever epic/sprint scope the Knowledge Pipeline's continued buildout is already tracked — see §9 for epic placement. Do not add a new epic or new domain-rollout milestone. |
+| `IntelligenceOS_Implementation_Guide.md` | If E1-4 (or its successor task, post-rename per Gap Analysis G-1) is still open, fold in the same payload-shape guidance the semantics analysis already specified for it (Deliverable 8: keep structured visual fields distinct from free-text fields) — this ADR doesn't change that guidance, it ratifies it. |
+| `INTELLIGENCEOS_BOOTSTRAP.md` | **One small, additive change**: in §6 (Domain Model)'s taxonomy paragraph, note that visual-modality learnings (color, typography, layout, mood) are modeled within the existing taxonomy/domain structure rather than as a separate domain, with a pointer to this ADR — this preempts the exact question this review raised from recurring for the next engineer who notices BrandOS had a richer visual concept than the current six domains. No change to §4 (Repository Structure), §5 (Package Responsibilities), or the domain count anywhere else in the document. |
+| `REPOSITORY_CONTEXT_STRATEGY.md` | No change required. The generated artifacts described there (`package_inventory.generated.md`, `domain_boundary_audit.generated.json`, etc.) already scale correctly to "six domains, more taxonomy categories" — they don't hardcode a domain count anywhere that would need updating. |
+| `agent-context-files/intelligence-os-knowledge/AGENT_CONTEXT.md` | Add the new `VisualFeatureExtractor` to its Responsibilities table once built, following the existing per-extractor row pattern — this is routine AGENT_CONTEXT maintenance per that file's own stated convention, not a special visual-related edit. |
+| `agent-context-files/intelligence-os-domains/AGENT_CONTEXT.md` | Add a one-line note to `UserIntelligenceDomain`'s row that it now also owns visual-modality `Learning`s, for the same reason any new taxonomy category gets a one-line acknowledgment — not a structural edit. |
+| `agent-context-files/intelligence-os-blueprint/AGENT_CONTEXT.md` | Add `VisualDirectives` to the list of types `NarrativePlanner`/`StructurePlanner` produce, alongside the existing `NarrativeFrame`/`StructurePlan` mention — a one-line addition to an existing list. |
+
+No change is needed to `agent-context-files/shared-intelligence-types/AGENT_CONTEXT.md`'s rules, `intelligence-os-events/AGENT_CONTEXT.md`, `intelligence-os-db/AGENT_CONTEXT.md`, or `REPOSITORY_READ_ORDER.md` — none of their guidance changes shape as a result of this decision.
+
+---
+
+## 9. Epic Impact
+
+**Visual Intelligence's extraction work belongs in whichever epic already owns continued Knowledge Pipeline buildout — not a new epic, and not Epic 1 as currently scoped.**
+
+Reasoning:
+- Epic 1, per the Implementation Guide and the semantics analysis's own Deliverable 8 review of it, is scoped to five specific features (E1-1 through E1-5), all already either confirmed-correct or refined-in-place. Visual feature extraction is not a refinement of any of those five — it's new extraction capability, which is a different kind of work than Epic 1's review-API/workspace-voice/summary-query/VLM-bridge-payload/classification-mapping scope.
+- It is, however, **directly adjacent to E1-4** (the VLM Visual Intelligence Bridge), which the semantics analysis already identified as the task that should keep visual fields structurally distinct from free-text fields specifically *so that* a later visual-feature extractor has clean data to consume (Deliverable 8's E1-4 recommendation, §8 above). This means: **E1-4 should ship in Epic 1 as already scoped** (the payload-shape decision), and **the `VisualFeatureExtractor` itself should land in the epic that follows** — whichever epic is scoped for genuinely new Knowledge Pipeline extraction capability, since that's the actual nature of this work, not a visual-specific scheduling consideration.
+- This is not a downgrade of the capability's importance — it's a sequencing consequence of a true dependency: building the extractor before E1-4 ships its payload-shape decision risks building it against a data shape (a collapsed free-text blob) that the extractor would then need to be rebuilt against once E1-4 lands. Building it after is strictly cheaper.
+
+If the Engineering Roadmap's epic numbering beyond Epic 1 isn't yet fixed at the time this ADR is read, the concrete recommendation is: **schedule the `VisualFeatureExtractor` as a Knowledge Pipeline task, gated on E1-4's payload-shape decision having shipped**, rather than pre-committing it to a specific epic number this ADR can't see.
+
+---
+
+## 10. Summary
+
+| Question | Answer |
+|---|---|
+| Is Visual Intelligence a real, valuable learning capability? | Yes — fully agreed with the prior semantic analysis's conclusion that BrandOS's dormant visual-identity design represents genuine, well-specified intent worth building toward. |
+| Is it a distinct *kind* of knowledge requiring a new domain? | No — it's an existing set of knowledge kinds (identity, structure, governance, reference material), expressed through a channel (visual) the current extractors don't read yet. |
+| What's actually missing today? | Extractor coverage (a `VisualFeatureExtractor` in the Knowledge Pipeline) and a small set of additive fields/taxonomy values on existing entities — not new domains, new tables, new pipelines, or new public-API surface. |
+| Where does it integrate into Blueprint assembly? | The same point text-voice guidance already integrates — inside `NarrativePlanner`/`StructurePlanner`, as additive fields, with no new pipeline step. |
+| Which epic? | Adjacent to, but after, E1-4 — as Knowledge Pipeline extraction work, gated on E1-4's payload-shape decision, not as a new epic or a Visual Intelligence-specific epic. |
+| Documentation changes required? | Small, additive, targeted edits to the Bootstrap, two `AGENT_CONTEXT.md` files, and the Roadmap — no rewrite of the Semantics Analysis or Ownership Audit, which already got this right. |
+
+**Final answer to this review's framing question:** treating "BrandOS had a richer Visual Identity concept than IntelligenceOS currently models" as evidence of an *architectural omission* was the wrong diagnosis. The richer concept exists and is already correctly absorbed into IntelligenceOS's domain model on paper (per the standing semantic analysis); what's missing is *implementation* (an extractor), not *architecture* (a domain). Building a seventh domain to hold a capability that already has a well-fitting home in six would be solving a documentation gap with a code change — exactly the kind of mirroring-BrandOS-instead-of-improving-IntelligenceOS move this review's own constraints warn against, just arrived at from the opposite direction (treating BrandOS's *richness* as a reason to add structure, rather than treating BrandOS's *specific implementation* as a reason to add structure — the same mistake either way).

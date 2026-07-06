@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output (run `pnpm -r build` to regenerate — see each package's package.json)
+dist/
+
+# TypeScript incremental/composite build info — written next to tsconfig.json,
+# not inside dist/, so `rimraf dist` alone won't remove it. A stale one makes
+# `tsc` silently skip emitting anything on the next build. Never commit these.
+*.tsbuildinfo
+
+# Turborepo cache (not currently used here, but harmless to exclude)
+.turbo/
+
+# Test artifacts
+coverage/
+
+# Editor / OS noise
+.DS_Store
+*.log
+
+# pnpm
+.pnpm-debug.log*
+
+# Local secrets — see packages/intelligence-os/.env.example
+.env
+.env.local
