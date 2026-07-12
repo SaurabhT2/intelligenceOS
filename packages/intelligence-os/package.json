@@ -1,0 +1,58 @@
+{
+  "name": "@intelligence-os/core",
+  "version": "0.3.0",
+  "description": "Intelligence OS — a deterministic user-intelligence layer and artifact-blueprint engine, published as an independently consumable platform SDK.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "serve": "tsx src/dev/serve.ts",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@intelligence-os/shared-types": "workspace:*",
+    "@platform/cognition-contract": "workspace:*",
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@vitest/coverage-v8": "^2.0.5",
+    "dotenv": "^16.4.5",
+    "rimraf": "^5.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -1,0 +1,63 @@
+-- =============================================================================
+-- Migration 003 — Add intelligence.knowledge_assets.extracted_visual_features
+-- =============================================================================
+-- Runtime Debugging Mission (post-Completion-Mission session).
+--
+-- Root cause of the reported defect:
+--   `POST /v1/knowledge/ingest` returned a 201 with a well-formed `assetId`,
+--   but `intelligence.knowledge_assets` remained empty on a freshly deployed
+--   project that had run schema.sql + 002_workspace_learning_owner.sql —
+--   exactly what this repository documented as the correct deployment steps.
+--
+--   `KnowledgeIntelligenceDomain.persistExtracted()`
+--   (packages/intelligence-os/src/domains/KnowledgeIntelligenceDomain.ts)
+--   unconditionally includes `extracted_visual_features` in every insert —
+--   it's Stage 4 (E1-4)'s output, and `VisualFeatureExtractor` runs on every
+--   asset, visual or not (returning an empty/null result for non-visual
+--   content, never omitting the field). But this column was never actually
+--   added to `schema.sql`'s `CREATE TABLE intelligence.knowledge_assets` —
+--   it existed only as a plain SQL snippet inside
+--   `docs/implementation/IMPLEMENTATION_STATUS.md`'s prose ("migration #1"),
+--   never applied to schema.sql and never shipped as a runnable file in this
+--   directory. Every insert into this table has always failed with
+--   `column "extracted_visual_features" of relation "knowledge_assets" does
+--   not exist` on any database that only ever ran the files this repository
+--   actually told you to run.
+--
+--   That failure was invisible at the HTTP layer because
+--   `KnowledgeProcessor.process()`'s Stage 6 (persist) catches any
+--   persistence error, logs nothing, and substitutes an in-memory
+--   "synthetic" asset with the same pre-generated `assetId` so the pipeline
+--   can still report a result — and `IntelligenceOS.ingestKnowledgeAsset()`
+--   discarded that result (and its `errors` array) entirely, always
+--   returning the `assetId` regardless of whether anything was persisted.
+--   Both the missing column (this migration) and the silent-failure paths
+--   (packages/intelligence-os/src/IntelligenceOS.ts,
+--   packages/intelligence-os/src/knowledge/KnowledgeProcessor.ts) were fixed
+--   in the same session — see IMPLEMENTATION_STATUS.md for the full record.
+--   Applying only this migration without the code fix would turn the bug
+--   from "silently drops every asset" into "works, once you also happen to
+--   send a well-formed request" — both are required.
+--
+-- This migration is additive and backward compatible: a nullable JSONB
+-- column with no default, matching `extracted_vocabulary`/
+-- `extracted_patterns`/`extracted_frameworks`'s existing nullable-JSONB
+-- shape on the same table. No existing row or query is affected.
+-- =============================================================================
+
+ALTER TABLE intelligence.knowledge_assets
+  ADD COLUMN IF NOT EXISTS extracted_visual_features JSONB;
+
+-- Verification (run manually after applying):
+--   SELECT column_name, data_type
+--   FROM information_schema.columns
+--   WHERE table_schema = 'intelligence'
+--     AND table_name = 'knowledge_assets'
+--     AND column_name = 'extracted_visual_features';
+--
+-- End-to-end verification (after applying this migration AND the code fix):
+--   POST /v1/knowledge/ingest with a well-formed asset (ownerType, assetType
+--   either provided or inferable, title, workspaceId or userId) should
+--   return 201 with an assetId, and
+--     SELECT * FROM intelligence.knowledge_assets WHERE id = '<assetId>';
+--   should return exactly one row whose id matches.

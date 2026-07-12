@@ -1,0 +1,29 @@
+{
+  "name": "@intelligence-os/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deployable runtime for IntelligenceOS. Owns environment loading, dependency composition, and HTTP hosting only — all IntelligenceOS business logic lives in @intelligence-os/core. See docs/adr/ADR-002-apps-runtime-layer.md.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@intelligence-os/core": "workspace:*",
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@vercel/node": "^3.2.0",
+    "dotenv": "^16.4.5",
+    "rimraf": "^5.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
