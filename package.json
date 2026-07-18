@@ -13,10 +13,10 @@
     "demo": "pnpm --filter @intelligence-os/demo start",
     "clean": "pnpm -r clean"
   },
+  "packageManager": "pnpm@9.15.9",
   "engines": {
-    "node": ">=22.0.0",
-    "pnpm": ">=9.0.0"
-  },
+    "node": ">=22.0.0"
+	},
   "devDependencies": {
     "@eslint/js": "9",
     "eslint": "9",
