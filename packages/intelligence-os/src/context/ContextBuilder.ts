@@ -54,12 +54,32 @@
  * path produces visual-feature Learnings yet (`ADR-001` §5's
  * `VisualFeatureExtractor` is unbuilt), so there is nothing ADR-003
  * generalizes here; this is an unrelated, still-open gap.
+ *
+ * ── `knowledge`, `reasoning`, `positioning`, as of ADR-004 ─────────────────
+ * ADR-004 (Cognitive Consolidation) §8 is explicit that this class performs
+ * ZERO synthesis for these three fields — they are thin projections of
+ * three already-computed fields on the Subject's current
+ * `IntelligenceProfile` (`ProfileBuilder.rebuildForSubject()`,
+ * off the critical path). This is why they're read via
+ * `UserIntelligenceDomain.getCurrentProfileForSubject()` rather than
+ * anything under `context/` computing them. `identity`/`voice` above are
+ * deliberately NOT migrated to also read from the profile in this same
+ * change — ADR-004 §8 records why (profile reads are staler, bounded by
+ * rebuild triggers; `identity`/`voice`'s live per-request freshness would
+ * regress). See ADR-004 §3, §8.
  */
 
 import type { CognitionContext } from '@platform/cognition-contract';
 import { COGNITION_CONTRACT_VERSION } from '@platform/cognition-contract';
-import type { VoiceProfile, IdentityContribution } from '@platform/cognition-contract';
+import type {
+  VoiceProfile, IdentityContribution,
+  CognitionKnowledgeSection, CognitionReasoningSection, CognitionPositioningSection,
+  CognitionConfidence,
+} from '@platform/cognition-contract';
 import type { WorkspaceIntelligenceDomain } from '../domains/WorkspaceIntelligenceDomain';
+import type { UserIntelligenceDomain } from '../domains/UserIntelligenceDomain';
+import type { SynthesizedCollection } from '../types/entities';
+import { workspaceSubject } from '../types/subject';
 import {
   deriveVoiceProfile,
   deriveConfidence,
@@ -176,8 +196,48 @@ function applyIdentityConfiguration(
   };
 }
 
+/**
+ * ADR-004 (Cognitive Consolidation) §9 — projects a `SynthesizedCollection<T>`
+ * (the internal, provenance-carrying shape on `IntelligenceProfile`) into
+ * the contract-facing shape `CognitionContext` exposes. Strips
+ * `sourceId`/`sourceKind`/per-item `confidence` deliberately — internal
+ * provenance, excluded by `cognition-contract`'s own header rule ("no
+ * repository or storage references, no extractor or resolver
+ * identifiers"). Zero synthesis happens here — `toValue` is a pure
+ * reshape of already-computed items, not a computation.
+ *
+ * Returns `{ items, confidence, hasConflict }` — the caller renames
+ * `items` to whichever contract-specific key that section uses
+ * (`themes`/`conclusions`/`statements`), since the three `CognitionContext`
+ * sections deliberately don't share one generic array-field name (each
+ * reads naturally in its own domain — PLATFORM_CONTRACT.md's own style for
+ * every other section).
+ */
+function projectSynthesizedCollection<T, U>(
+  collection: SynthesizedCollection<T> | null,
+  toValue: (v: T) => U,
+): { items: readonly U[]; confidence: CognitionConfidence; hasConflict: boolean } | null {
+  if (!collection) return null;
+  return {
+    items: collection.items.map(i => toValue(i.value)),
+    confidence: projectSynthesisConfidence(collection.confidence),
+    hasConflict: collection.hasConflict,
+  };
+}
+
+/** Same 0.75/0.5 thresholds `voiceMapping.ts::deriveConfidence()` already uses — one confidence vocabulary, not a second one invented for these three fields. */
+function projectSynthesisConfidence(confidence: number): CognitionConfidence {
+  if (confidence >= 0.75) return 'high';
+  if (confidence >= 0.5) return 'medium';
+  return 'low';
+}
+
 export class ContextBuilder {
-  constructor(private readonly workspace: WorkspaceIntelligenceDomain) {}
+  constructor(
+    private readonly workspace: WorkspaceIntelligenceDomain,
+    /** ADR-004 (Cognitive Consolidation) §8 — the one new dependency this class gained, for the `knowledge`/`reasoning`/`positioning` profile read. */
+    private readonly userDomain: UserIntelligenceDomain,
+  ) {}
 
   /**
    * Assembles the complete, immutable CognitionContext for a workspace.
@@ -200,9 +260,12 @@ export class ContextBuilder {
    *   without a future contract-shape change.
    */
   async build(workspaceId: string, _taskType?: string): Promise<CognitionContext> {
-    const [learnings, workspaceContext] = await Promise.all([
+    const [learnings, workspaceContext, profile] = await Promise.all([
       this.workspace.getWorkspaceLearnings(workspaceId),
       this.workspace.getContext(workspaceId),
+      // ADR-004 §8 — one new read, same cost class as the two above (a
+      // single indexed row lookup), no synthesis performed here.
+      this.userDomain.getCurrentProfileForSubject(workspaceSubject(workspaceId)),
     ]);
 
     const voice = applyVoiceConfiguration(deriveVoiceProfile(learnings), workspaceContext.voiceConfiguration);
@@ -225,6 +288,32 @@ export class ContextBuilder {
         signalCount: learnings.length,
         lastConsolidatedAt: deriveLastConsolidatedAt(learnings),
       },
+      // ADR-004 (Cognitive Consolidation) §3, §8, §9 — thin projections of
+      // the current profile's three synthesized fields. `profile` is
+      // `null` for a Subject with no profile yet (nothing learned or
+      // uploaded), in which case all three resolve to the same honest
+      // `null` `identity` already uses in that state.
+      knowledge: ((): CognitionKnowledgeSection | null => {
+        const projected = projectSynthesizedCollection(
+          profile?.knowledgeSummary ?? null,
+          v => ({ name: v.name, description: v.description }),
+        );
+        return projected ? { themes: projected.items, confidence: projected.confidence, hasConflict: projected.hasConflict } : null;
+      })(),
+      reasoning: ((): CognitionReasoningSection | null => {
+        const projected = projectSynthesizedCollection(
+          profile?.reasoningSummary ?? null,
+          v => ({ statement: v.statement }),
+        );
+        return projected ? { conclusions: projected.items, confidence: projected.confidence, hasConflict: projected.hasConflict } : null;
+      })(),
+      positioning: ((): CognitionPositioningSection | null => {
+        const projected = projectSynthesizedCollection(
+          profile?.positioningSummary ?? null,
+          v => ({ statement: v.statement }),
+        );
+        return projected ? { statements: projected.items, confidence: projected.confidence, hasConflict: projected.hasConflict } : null;
+      })(),
     };
   }
 }

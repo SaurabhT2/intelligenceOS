@@ -66,6 +66,10 @@ const provider = intelligenceOS.asCognitionProvider();
 // `intelligenceOS` also structurally satisfies the port's now-optional
 // `ingestWorkspaceConfiguration`, so POST /v1/workspace-configuration is
 // live on this deployment target too, with no further change here.
+// Cognitive Platform Evolution Program (Milestone 3, EM-3.1/EM-3.3): same
+// again for `recordFeedbackEvent`/`recordCorrection` — POST
+// /v1/intelligence/feedback and /v1/intelligence/correction are live here
+// too, with no change to this file.
 const server = createCognitionHttpServer(
   provider,
   { apiKey: requireEnv('COGNITION_API_KEY') },

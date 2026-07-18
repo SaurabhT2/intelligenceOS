@@ -8,22 +8,23 @@
 
 | | |
 |---|---|
-| **Packages** | `@intelligence-os/shared-types` `0.2.0` · `@intelligence-os/core` `0.3.0` · `@platform/cognition-contract` `1.0.0` |
+| **Packages** | `@intelligence-os/shared-types` `0.2.0` · `@intelligence-os/core` `0.5.0` · `@platform/cognition-contract` `1.1.0` |
 | **Apps** | `@intelligence-os/api` `0.1.0` · `@intelligence-os/demo` `0.1.0` · `@intelligence-os/playground` `0.1.0` |
 | **TypeScript** | Clean (`pnpm -r typecheck` — 0 errors, 6 of 7 workspace projects have a typecheck script) |
-| **Tests** | 481 / 481 passing, 29 test files, `@intelligence-os/core` (`pnpm --filter @intelligence-os/core test`) — up from 468/468 across 28 files; 13 new tests added this update closing the ADR-003 Compliance Audit's D-3/D-4 findings (`ContextBuilder` identity-configuration precedence, `WorkspaceIntelligenceDomain.getContext()`'s real read path, `KnowledgeIntelligenceDomain.upsertWorkspaceConfiguration()`'s identityConfiguration field, the new `/v1/workspace-configuration` HTTP route, `IntelligenceOSProvider.ingestWorkspaceConfiguration()` delegation) |
+| **Tests** | 600 / 600 passing, 40 test files, `@intelligence-os/core` (`pnpm --filter @intelligence-os/core test`) — up from 509/509 across 34 files; 91 new tests added this update in the IntelligenceOS Completion Plan execution session (§3, fifth session): dedicated unit-test files for `HypothesisEngine` (23), `LearningValidator` (16), `ProfileBuilder`'s pre-ADR-004 logic (19), `ProjectContextBuilder` (12), the new activation-trigger counter (10), the new `confidenceMerge` helper (7), plus `recordCorrection()` emitter coverage folded into the existing `UserCorrection.test.ts`/`E2-4.intelligenceOSProvider.test.ts` (4) |
 | **Boundary check** | Clean — `RULE-IOS-ISOLATION`, `RULE-SIT-ISOLATION`, `RULE-PIPELINE-NO-DIRECT-DB`: 0 violations each |
-| **CI** | None configured — no `.github/workflows/`. `pnpm validate` (typecheck + boundary check) is what a CI job would run if one existed. |
-| **Live-database integration tests** | Not run in this environment — they require a real Supabase project (see §4). This includes `migrations/004_subject_centric_intelligence.sql` (new this update — see §4). |
+| **CI** | `.github/workflows/ci.yml` — runs `pnpm validate` (typecheck + boundary check + lint) and `pnpm test` on every PR/push. **New this update** (§3, fifth session); previously none configured. |
+| **Lint** | `eslint.config.mjs` (workspace-wide, flat config) — `pnpm lint`, folded into `pnpm validate`. **New this update**; 0 errors, 8 pre-existing warnings in test-file dead code (unused test helpers), left as-is (warnings, not errors; not part of this session's scope). |
+| **Live-database integration tests** | Not run in this environment — they require a real Supabase project (see §4). Unchanged this update: still `migrations/002`/`004`/`005`, none applied. |
 
 ## 2. What's implemented
 
 Two independent public surfaces, both real (see [`ARCHITECTURE.md`](./ARCHITECTURE.md) §4 for the full picture):
 
-- **`IIntelligenceProvider`** (in-process SDK): `buildBlueprint`, `recordFeedbackEvent`, `ingestKnowledgeAsset`, `ingestWorkspaceConfiguration`, `upsertProject`, `reviewLearning`, `getBrandSummary` — all live. `IntelligenceOS` implements this directly. `ingestWorkspaceConfiguration` promoted onto the interface this update (§3, third session), closing Compliance Audit finding D-4. **Not yet present:** a public method to emit `intelligence.user.correction` (see §5 Known Issues) — the handler side exists, nothing yet calls it.
+- **`IIntelligenceProvider`** (in-process SDK): `buildBlueprint`, `recordFeedbackEvent`, `ingestKnowledgeAsset`, `ingestWorkspaceConfiguration`, `upsertProject`, `reviewLearning`, `getBrandSummary`, `recordCorrection` — all live. `IntelligenceOS` implements this directly. `recordCorrection` promoted onto the interface this update (§3, fifth session) — the emitter half of `intelligence.user.correction`; the handler side had existed since the first session this update.
 - **`CognitionProvider`** (HTTP, cross-platform contract with BrandOS): `resolveCognitionContext`, `observe`, `review`, `summarizeCognition`, `checkHealth` — all live, hosted by `apps/api`, unchanged this update. See [`PLATFORM_CONTRACT.md`](./PLATFORM_CONTRACT.md).
 
-Six domains, three pipelines, all described in detail in `ARCHITECTURE.md` §6–§10. **All domain-ownership boundary violations are now resolved** (see §3) — every write anywhere in the codebase to an `intelligence.*` table now goes through its owning domain, and this is now mechanically enforced rather than only documented. Five of six domains are fully real or real-except-one-deliberately-deferred-method; `RelationshipIntelligenceDomain` remains fully inert, waiting on its documented activation trigger (unchanged this update). The Learning Pipeline, Blueprint Pipeline, and Knowledge Pipeline are all fully wired and exercised by the test suite end to end.
+Six domains, three pipelines, all described in detail in `ARCHITECTURE.md` §6–§10. **All domain-ownership boundary violations are now resolved** (see §3) — every write anywhere in the codebase to an `intelligence.*` table now goes through its owning domain, and this is now mechanically enforced rather than only documented. Five of six domains are fully real or real-except-one-deliberately-deferred-method; `RelationshipIntelligenceDomain` remains inert for every real operation (every method but one still throws `DomainNotActivatedError`), but its activation-trigger *check* is now real and tested (`checkActivationTrigger()`, §3 fifth session) rather than undetectable from code — the check itself does not activate anything. The Learning Pipeline, Blueprint Pipeline, and Knowledge Pipeline are all fully wired and exercised by the test suite end to end.
 
 Two runtime hosts for the HTTP surface (`apps/api/src/server.ts` for long-running processes, `apps/api/api/cognition.ts` for Vercel), both calling the identical routing/auth logic (`createCognitionHttpServer`, from `@intelligence-os/core`), **and both now also wiring up the optional Knowledge Ingest route** (`POST /v1/knowledge/ingest`) — see §3. See [`DEPLOYMENT.md`](./DEPLOYMENT.md).
 
@@ -71,46 +72,250 @@ An independent `ADR-003 Compliance Audit` was supplied alongside this session's 
 
 **Test/type/boundary status at end of this session:** 481/481 tests passing (468 pre-existing + 13 new), up from 468/468, across 29 test files (up from 28 — new: `tests/unit/milestone2/M2-domain.getContext.test.ts`). `pnpm -r typecheck` clean across all 6 buildable workspace packages. `pnpm --filter @intelligence-os/core run check:boundaries` clean, all 3 rules, 0 violations.
 
+### Fourth session this update: EM-8 — ADR-004 (Cognitive Consolidation) implementation
+
+Implements `docs/adr/ADR-004-cognitive-consolidation.md` per its accompanying Engineering
+Blueprint. Faithful implementation, not a redesign — the blueprint's own §0 validation pass had
+already resolved the major open design questions (union-vs-override combination rules,
+`positioning`'s Experience-only scope, the debounced Knowledge rebuild trigger). Two further,
+narrower gaps surfaced only once actual implementation traced the real entities and event
+payloads involved, both documented rather than silently patched around:
+
+- **`intelligence.signal.extracted`'s payload was missing `ownerType`/`workspaceId`.**
+  `FeedbackProcessor.processKnowledgeExtraction()` needs to resolve the correct `SubjectRef` (User
+  or Workspace) for an uploaded asset, but the event's pre-existing emission only ever carried
+  `userId`. `KnowledgeProcessor` already had `job.ownerType`/`job.workspaceId` in scope at the
+  emission point (used immediately above for `persistAsset()`) — genuinely a forwarding omission,
+  not a missing capability. Fixed by adding both fields to that one emit call.
+- **`SynthesizedCollection.hasConflict` has no Knowledge-side signal to reuse.** The ADR's §7.3
+  called for reusing "each source's own existing contradiction signal." `Learning.state ===
+  'FLAGGED'` is a real, existing Experience-side signal. `KnowledgeAsset` has no persisted
+  equivalent — its `version`/`isCurrent` mechanism only distinguishes historical from current
+  assets, which synthesis never sees in the first place (`getCurrentAssetsForSubject()`'s
+  `isCurrent` filter already excludes superseded versions upstream). `hasConflict` is therefore
+  only ever set from the Experience side today; this is recorded as a genuine, narrow ADR-versus-
+  entity gap in the ADR's §6, not resolved by inventing a Knowledge-side heuristic in code.
+- **Schema strategy corrected against demonstrated repository precedent.** The blueprint's File
+  Impact Matrix called for modifying `schema.sql`'s baseline `profiles` table directly. On
+  implementation, that table was found to still reflect the pre-ADR-003 shape — neither prior
+  profiles-table migration (`002`, `004`) had been folded back into the baseline, an already-
+  documented convention (§4 below). `005_cognitive_consolidation.sql` follows that same,
+  established pattern (migration file only) rather than introducing a third, inconsistent one.
+
+**What shipped:** `ProfileBuilder` reads a Subject's current Knowledge alongside Experience at
+every rebuild (`KnowledgeIntelligenceDomain.getCurrentAssetsForSubject()`, new); `IntelligenceProfile`
+gained `knowledgeSummary`/`reasoningSummary`/`positioningSummary` (new `SynthesizedCollection<T>`
+shape) and a corrected `vocabularySnapshot`; a fourth, debounced rebuild trigger fires off the
+Knowledge Pipeline's existing `intelligence.signal.extracted` event via a new
+`FeedbackProcessor.processKnowledgeExtraction()` entry point; `ContextBuilder`/`CognitionContext`
+expose the result as three new, additive, nullable fields (`knowledge`/`reasoning`/`positioning`;
+contract bumped `1.0.0` → `1.1.0`). Closes Compliance Audit finding D-5.
+
+**Test/type/boundary status at end of this session:** 509/509 tests passing (481 pre-existing +
+28 new), up from 481/481, across 34 test files (up from 29 — new: `tests/unit/adr-004/` (4 files)
+and `tests/integration/ADR-004.pipeline-wiring.integration.test.ts`). `pnpm -r typecheck` clean
+across all 7 buildable workspace packages. `pnpm --filter @intelligence-os/core run
+check:boundaries` clean, all 3 rules, 0 violations. One of the new `ContextBuilder` tests caught a
+real bug during implementation (the profile-projection helper returned a generic `items` key
+where the contract shape needed `themes`/`conclusions`/`statements`, and an unsafe type cast had
+silently hidden the mismatch from `tsc`) — fixed before this entry was written; the corrected code
+no longer relies on any unsafe cast for this projection.
+
+### Fifth session this update: IntelligenceOS Completion Plan execution
+
+A session with an explicit mandate — execute the previously-produced Completion Plan
+(itself built from `ADR-005_Architecture_Governance_Synthesis.md`, treated as the
+authoritative backlog), not produce further analysis. Scope: every remaining
+Engineering/Technical-Debt/Operational-preparation item and the small architecture
+decisions the plan had already identified as resolvable without a Product Question.
+Product-gated items (`audience`/`guidance`/positioning's Knowledge-side input/
+Multi-Subject identity) and any future DomainOS/Domain-Intelligence architecture were
+explicitly out of scope and left untouched. Unlike every prior session, this one had a
+working `pnpm`/Node toolchain and network access to the public npm registry — still no
+Supabase/live-database access, and no BrandOS repository access.
+
+1. **Hygiene, closed in full.** `db/queries/`'s six empty placeholder files deleted
+   (nothing imported from them). `packages/intelligence-os`'s package-root
+   `AGENT_CONTEXT.md` moved from the repository root to
+   `packages/intelligence-os/AGENT_CONTEXT.md`. Root `tsconfig.base.json` added — every
+   package's `tsconfig.json` now extends it rather than repeating the same compiler
+   options six times; verified typecheck stays clean across all 6 buildable packages
+   after the change. `eslint.config.mjs` added (workspace-wide flat config, `pnpm
+   lint`) — found and fixed two real, deliberate-but-unflagged lint issues
+   (`no-control-regex` on `KnowledgeAssetExtractor.ts`'s intentional control-character
+   strip, silenced with an inline comment rather than removed; an unnecessary regex
+   escape in `VisualFeatureExtractor.ts`, removed) plus half a dozen genuinely-unused
+   imports/locals across `StructurePlanner.ts`/`WorkspaceIntelligenceDomain.ts`/
+   `KnowledgeProcessor.ts`/`PatternExtractor.ts` — all fixed; 0 lint errors as of this
+   update, 8 pre-existing warnings left in test-file dead code (out of scope).
+   `.github/workflows/ci.yml` added — `pnpm validate` + `pnpm test` on every PR/push,
+   no live infrastructure required (every test in this suite mocks Supabase).
+2. **Test-coverage gap closed.** Five new dedicated unit-test files (91 new tests
+   total — see §1): `HypothesisEngine.test.ts` (23 — corroboration/contradiction math,
+   stability-class thresholds, Subject-generic discard path), `LearningValidator.test.ts`
+   (16 — state eligibility, the contradiction block, the escalation rule, Subject-aware
+   Learning creation), `ProfileBuilder.test.ts` (19 — the three `shouldRebuild` triggers,
+   the ADR-004 Knowledge-trigger debounce, composite-confidence weighting, versioning,
+   event emission; deliberately does not duplicate the existing
+   `ADR-004.ProfileBuilder.synthesis.test.ts`'s union-with-provenance coverage),
+   `ProjectContextBuilder.test.ts` (12 — the fail-soft `degraded` pattern across all
+   four sources, the project/global learning-scope filter), and
+   `RelationshipActivationTrigger.test.ts` (10 — see item 4 below). `vitest.config.ts`'s
+   coverage thresholds raised from the Sprint 0 defaults (`lines: 40, branches: 30`) to
+   `lines: 85, branches: 78` — real measured coverage as of this update is ~89%
+   lines / ~84% branches; thresholds sit a few points below that as headroom.
+3. **`IntelligenceOS.recordCorrection()` built — the emitter side `IIntelligenceProvider`
+   was missing.** `UserCorrectionInput` (`types/domains.ts`) is the considered,
+   separately-reviewed public-contract addition `ARCHITECTURE.md` §11 Rule 7 asks for,
+   following the exact treatment `ingestWorkspaceConfiguration()` received in the third
+   session (§3 above): additive, non-breaking, added to `IIntelligenceProvider` and
+   `IntelligenceOSProvider`, a `CHANGELOG.md` entry, a minor version bump (`0.4.0` →
+   `0.5.0`). No new persistence table — like `ingestWorkspaceConfiguration()`, a
+   correction's only durable effect is the Learning it confirms via
+   `LearningValidator.maybeConfirm()`, so this method purely emits
+   `intelligence.user.correction` with a stamped `occurredAt`. 4 new tests, extending
+   the existing `UserCorrection.test.ts` and `E2-4.intelligenceOSProvider.test.ts`
+   rather than duplicating their existing handler-side coverage.
+4. **`RelationshipIntelligenceDomain`'s activation-trigger counting logic built.**
+   `ArtifactIntelligenceDomain.countArtifactsWithNamedRecipients()` counts
+   `artifact_blueprints` rows whose persisted `audience_calibration.isNamedRelationship`
+   is true (the table this domain already owns and already writes via
+   `persistBlueprint()`). `RelationshipIntelligenceDomain.checkActivationTrigger()`
+   combines that count against Contracts §J.3's threshold (≥3) with the explicit-
+   onboarding-signal escape hatch, and returns a real, queryable answer. **Deliberately
+   advisory only:** every stub method on `RelationshipIntelligenceDomain`
+   (`getRelationship`/`getActiveRelationships`/`getNamedAudienceProfile`/etc.) still
+   throws `DomainNotActivatedError` regardless of what this check returns — building
+   real named-relationship storage and read paths is separate, larger Phase 2 feature
+   work, not part of this session's scope. 10 new tests, including one that explicitly
+   asserts the stub methods are unaffected even when the trigger has clearly fired.
+5. **Three independent confidence-merge implementations (Compliance Audit finding
+   D-2) reduced to two.** New shared helper `context/confidenceMerge.ts`
+   (`mergeByAscendingConfidence()`), now the one implementation both
+   `identitySynthesis.ts::deriveIdentityContribution()` and
+   `voiceMapping.ts::deriveVoiceProfile()` call — both were byte-for-byte the same
+   "sort ascending by confidence, fold fields, last write wins" algorithm. Verified
+   behavior-preserving: the full existing test suite (`M2-context.voiceMapping.test.ts`,
+   the ADR-003 identity-synthesis tests, etc.) passes unchanged after the refactor,
+   with no test modifications needed. 7 new tests directly exercising the helper.
+   **`NarrativePlanner`'s authority-ordered composition is intentionally NOT
+   consolidated into this helper** — on inspection it is a materially different
+   algorithm (an explicit named-priority chain per field, with array-valued fields
+   *unioned* across levels rather than overwritten), and forcing it into this module's
+   shape would mean rewriting genuinely different, already-correct logic for cosmetic
+   uniformity rather than real deduplication. This narrows ADR-005's characterization
+   of the finding — recorded here rather than silently reinterpreted. See
+   `confidenceMerge.ts`'s own docblock for the full reasoning, including why
+   `ProfileBuilder.ts`'s `buildSynthesizedCollection()` union rule (a fourth, distinct
+   algorithm) was also never a candidate.
+6. **`ADR-004`'s Knowledge-side `hasConflict` gap resolved by narrowing the ADR's own
+   text**, not by inventing a Knowledge-side conflict heuristic. No consumer has
+   demonstrated a need for Knowledge-side conflict detection; `ADR-004` §6 and
+   `PLATFORM_CONTRACT.md`'s `knowledge`/`reasoning`/`positioning` documentation now
+   both state plainly that `hasConflict` is Experience-only by design, matching what
+   was actually implemented, rather than describing it as an open follow-up decision.
+7. **`ADR-002`'s migration completed.** `packages/intelligence-os/src/dev/serve.ts`
+   removed (its behavior had already fully converged with `apps/api/src/server.ts` per
+   the ADR's own second addendum), along with its `serve` script and `dotenv`/`tsx`
+   devDependencies, and `check-boundaries.mjs`'s `src/dev/**` carve-out —
+   `RULE-IOS-ISOLATION` now applies uniformly to all of `packages/intelligence-os/src`.
+   `README.md`'s "running the server locally" section now points at `apps/api`. Two
+   stale in-code comments referencing the removed file (in `api/http/server.ts`) were
+   also updated. A fourth addendum was added to `ADR-002` recording this closure.
+8. **`npm publish --dry-run` run successfully** for both `@intelligence-os/core` and
+   `@intelligence-os/shared-types` — no registry login is required for a dry run,
+   unlike a real publish. Both packaged cleanly (70 files / 164.8 kB and 27 files /
+   9.3 kB respectively); packaging readiness is confirmed, though the actual,
+   non-dry-run publish still needs real registry credentials this environment doesn't
+   have.
+
+**Reconsidered and left undone, on reflection during this session (not merely
+re-confirmed as blocked):** `ProjectInput.brandosProjectId`/`getProjectByBrandosId()`'s
+rename had been recorded across three prior sessions as blocked purely on "needs a live
+database migration." On this session's own reflection, that undersells the real
+blocker: `brandosProjectId` is a public-contract field BrandOS's live integration
+sends today, so renaming it (even alongside a coordinated schema migration) is a
+breaking cross-repository API change that needs BrandOS-side coordination and adoption
+timing — the same category of blocker as the `@platform/cognition-contract`
+de-duplication, not a same-repository decision this session could safely execute
+alone. Left unrenamed; recorded here as a corrected understanding of *why*, not just
+*that*, it remains open.
+
+**Deliberately not attempted this session, unchanged:** live-database migration
+application and its full verification checklist (§4) and folding migrations back into
+`schema.sql`'s baseline (no Supabase credentials in this environment — same constraint
+every prior session recorded); `@platform/cognition-contract` de-duplication (needs
+BrandOS-side coordination); `audience`/`guidance` scoping, positioning's Knowledge-side
+input, and Multi-Subject identity composition (Product Questions, ADR-005 §6); any
+future DomainOS/Domain-Intelligence architecture (Part B territory, already completed
+in a prior session and explicitly out of scope for this one).
+
+**Test/type/boundary/lint status at end of this session:** 600/600 tests passing (509
+pre-existing + 91 new), up from 509/509, across 40 test files (up from 34 — 6 new:
+`tests/unit/pipeline/HypothesisEngine.test.ts`,
+`tests/unit/pipeline/LearningValidator.test.ts`,
+`tests/unit/pipeline/ProfileBuilder.test.ts`,
+`tests/unit/blueprint/ProjectContextBuilder.test.ts`,
+`tests/unit/domains/RelationshipActivationTrigger.test.ts`,
+`tests/unit/context/confidenceMerge.test.ts`; the
+`UserCorrection.test.ts`/`E2-4.intelligenceOSProvider.test.ts` additions extended
+existing files rather than adding new ones). `pnpm -r typecheck` clean across all 7
+buildable workspace packages. `pnpm --filter @intelligence-os/core run
+check:boundaries` clean, all 3 rules, 0 violations. `pnpm lint` (new this session)
+clean, 0 errors. Coverage thresholds (raised this session) pass:
+`pnpm --filter @intelligence-os/core test:coverage` exits 0 at ~89% lines / ~84%
+branches against an 85/78 floor. All of the above independently re-run for this
+documentation update, not taken on the strength of this session's own record of
+itself.
+
 ## 4. Pending schema migrations
 
-`schema.sql` now includes the `artifact_blueprints.degraded`/`.confidence_score` columns directly in its baseline `CREATE TABLE` statement (added in the Completion Mission session; there is no separate numbered migration file for this change — it was folded straight into the hand-maintained source-of-truth file, the same way most schema changes in this repository are made). It still shows `learnings.user_id UUID NOT NULL` and no `subject_type`/`workspace_id` columns on `hypotheses`/`signals`/`profiles` — the two separate migration files that exist, `002_workspace_learning_owner.sql` and this update's new `004_subject_centric_intelligence.sql`, have **not** been applied to any live database in this environment and have not been folded back into `schema.sql` itself. (There is no `003` gap — `003_knowledge_assets_visual_features.sql` already occupies that number, from `ADR-001`'s implementation.)
+`schema.sql` now includes the `artifact_blueprints.degraded`/`.confidence_score` columns directly in its baseline `CREATE TABLE` statement (added in the Completion Mission session; there is no separate numbered migration file for this change — it was folded straight into the hand-maintained source-of-truth file, the same way most schema changes in this repository are made). It still shows `learnings.user_id UUID NOT NULL` and no `subject_type`/`workspace_id` columns on `hypotheses`/`signals`/`profiles`, and no `knowledge_summary`/`reasoning_summary`/`positioning_summary` columns on `profiles` either — the three separate migration files that exist, `002_workspace_learning_owner.sql`, `004_subject_centric_intelligence.sql`, and this update's new `005_cognitive_consolidation.sql`, have **not** been applied to any live database in this environment and have not been folded back into `schema.sql` itself — `005` deliberately follows `002`/`004`'s established precedent (migration file only) rather than introducing a third, inconsistent convention (see ADR-004 §6). (There is no `003` gap — `003_knowledge_assets_visual_features.sql` already occupies that number, from `ADR-001`'s implementation.)
 
 No live Supabase project is configured in this environment, so none of the following have been verified end-to-end — carried forward as still-required steps:
 
 | Step | Depends on |
 |---|---|
-| Apply `schema.sql` (including blueprint columns) + `migrations/002_workspace_learning_owner.sql` + `migrations/004_subject_centric_intelligence.sql` to a real Supabase project | Supabase project access |
+| Apply `schema.sql` (including blueprint columns) + `migrations/002_workspace_learning_owner.sql` + `migrations/004_subject_centric_intelligence.sql` + `migrations/005_cognitive_consolidation.sql` to a real Supabase project | Supabase project access |
 | Confirm `reviewLearning`/`reviewLearningForWorkspace` persist correctly against a live database | Above |
 | Confirm two users in the same workspace share workspace-scoped learnings in an assembled blueprint | Above |
 | Confirm `getBrandSummary` / `summarizeCognition` return correct counts against real data | Above |
 | Confirm `persistBlueprint()` actually writes `degraded`/`confidence_score` correctly against a live table (verified only by reading the method body and schema in this sandboxed environment) | Above |
-| **New this update:** confirm the `subject_type` discriminator and its `CHECK` constraints behave as designed against a live table for both User- and Workspace-subject rows across `learnings`/`hypotheses`/`signals`/`profiles` (verified only by reading the migration and the mocked-Supabase test suite in this sandboxed environment) | Above |
-| **New this update:** confirm a Workspace's synthesized `identity` and explicit `voiceConfiguration` resolve correctly through `resolveCognitionContext` against real accumulated data | Above |
-| `npm publish --dry-run` for `@intelligence-os/core` and `@intelligence-os/shared-types` against built `dist/` | Registry access/credentials (none configured here) |
+| Confirm the `subject_type` discriminator and its `CHECK` constraints behave as designed against a live table for both User- and Workspace-subject rows across `learnings`/`hypotheses`/`signals`/`profiles` (verified only by reading the migration and the mocked-Supabase test suite in this sandboxed environment) | Above |
+| Confirm a Workspace's synthesized `identity` and explicit `voiceConfiguration` resolve correctly through `resolveCognitionContext` against real accumulated data | Above |
+| **New this update:** confirm `knowledge_summary`/`reasoning_summary`/`positioning_summary` round-trip correctly (JSONB write/read of the new `SynthesizedCollection<T>` shape) against a live `profiles` table | Above |
+| **New this update:** confirm the debounced Knowledge rebuild trigger behaves correctly under real, concurrent upload activity, not just the mocked-event-bus test suite | Above |
+| `npm publish --dry-run` for `@intelligence-os/core` and `@intelligence-os/shared-types` against built `dist/` | ~~Registry access/credentials (none configured here)~~ **Done this update (fifth session)** — a dry run needs no login; both packaged cleanly. The actual, non-dry-run publish still needs real registry credentials. |
 
 ## 5. Known Issues / Technical Debt
 
-Re-verified directly against current source for this update. Three items this document previously listed among the top open issues — the domain-ownership boundary violation, the un-wired Knowledge Ingest route, and workspace-scoped observations bypassing the Learning Pipeline (identity permanently `null`) — are **resolved** (§3) and have been removed from this list rather than kept as stale entries.
+Re-verified directly against current source for this update. Three items this document previously listed among the top open issues — the domain-ownership boundary violation, the un-wired Knowledge Ingest route, and workspace-scoped observations bypassing the Learning Pipeline (identity permanently `null`) — were resolved in earlier sessions this update (§3) and were already removed from this list. **This session (fifth) resolves six more:** the Knowledge-side `hasConflict` gap (narrowed, not built), two of the three D-2 merge-implementation duplicates, the `RelationshipIntelligenceDomain` activation-trigger counting logic, `db/queries/`'s placeholder files, `IntelligenceOS.recordCorrection()`, and `ADR-002`'s migration — each marked "resolved (fifth session)" below rather than removed outright, so the resolution itself stays visible rather than silently disappearing.
 
 ### Architectural
 
-**Ordinary document-extracted Knowledge has no path into Cognition (Compliance Audit D-5, the largest remaining ADR-003 gap).** `ContextBuilder`/`WorkspaceIntelligenceDomain.getContext()` only read the narrow `complianceConstraints`/`voiceConfiguration`/`identityConfiguration` keys that only the explicit `upsertWorkspaceConfiguration()` path writes. The general-extraction output every real document upload produces (`VocabularyExtractionResult`, `FrameworkExtractionResult`, `PatternExtractionResult`) is written to the same `extracted_frameworks`/`extracted_vocabulary` columns under different keys `getContext()` never inspects, so it is structurally invisible to Cognition regardless of upload volume or extraction quality. Closing this well requires a real design decision — which extracted fields should feed `voice`/`identity`, at what confidence, and how they rank against explicit configuration and Learnings in the authority ordering — not a mechanical read-path fix. See §3's third session for why this was deliberately not attempted alongside D-3/D-4.
+**`SynthesizedCollection.hasConflict` has no Knowledge-side signal — resolved by narrowing ADR-004's own text (fifth session).** Previously recorded as an open follow-up ("design a real signal, or narrow the text"). Resolved: the text is narrowed. `hasConflict` remains Experience-only (`Learning.state === 'FLAGGED'`) by design — no consumer has demonstrated a need for Knowledge-side conflict detection, and inventing a heuristic without one would be exactly the kind of speculative machinery this platform has repeatedly declined to build elsewhere (ADR-001, ADR-003). See `docs/adr/ADR-004-cognitive-consolidation.md` §6.
 
-**Three independent implementations of the same confidence-ordered field-merge pattern (Compliance Audit D-2).** `identitySynthesis.ts::deriveIdentityContribution()`, `voiceMapping.ts::deriveVoiceProfile()`, and `NarrativePlanner`'s authority-ordered composition each separately implement "project a `Learning[]`/config slice into a contract shape, highest-confidence-wins per field." No runtime disagreement exists today (all three currently produce consistent results), but nothing enforces that a future change to the merge-precedence rule gets made in all three places. Low urgency; a contained refactor (extract one shared field-merge helper, have all three call it) whenever one of the three is next touched for an unrelated reason.
+**`positioning` (`CognitionContext`) has no Knowledge-side input (ADR-004, by design).** Unchanged — no Knowledge Pipeline extractor produces competitive/market framing; `positioningSummary` is Experience-only. Deliberate, documented scope decision (ADR-004 §0.1), not an oversight. A future Knowledge-side positioning extractor is real, valuable follow-up work, correctly sequenced as its own decision — a Product Question, not an engineering one, so out of scope for a Completion Plan execution session.
 
-**`RelationshipIntelligenceDomain`'s activation trigger is still unverifiable from code.** Unchanged this update: the domain's docblock states it activates at "≥3 external artifacts with named recipients," but no code anywhere counts this or flips any switch. Either implement the trigger-check or update the docblock to state this is a documented future criterion, not currently automated.
+**`audience`/`guidance` (`CognitionContext`) remain unimplemented.** Unchanged — Product Questions (ADR-005 §6), out of scope for engineering-only work. `audience` likely extends the existing, already-real `AudienceProfile`/`AudienceCalibrator` instead; `guidance` has no obvious existing home. Both need their own first-principles scoping pass.
 
-**`db/queries/` is still six empty placeholder files.** Unchanged this update. Nothing imports from this directory. Still an open decision: delete it now, or keep it and demonstrate one real extraction.
+**Three independent implementations of the same confidence-ordered field-merge pattern (Compliance Audit D-2) — reduced to two, resolved for the pair that were genuinely duplicates (fifth session).** `identitySynthesis.ts::deriveIdentityContribution()` and `voiceMapping.ts::deriveVoiceProfile()` were byte-for-byte the same algorithm; both now call one shared helper, `context/confidenceMerge.ts::mergeByAscendingConfidence()`. Verified behavior-preserving — the existing test suite passed unchanged. **`NarrativePlanner`'s authority-ordered composition was not consolidated into this helper**, on the finding that it's a materially different algorithm (an explicit named-priority chain per field, with array-valued fields unioned across levels rather than overwritten) — forcing it into the same shape would mean rewriting genuinely different, already-correct logic for cosmetic uniformity, not real deduplication. This narrows ADR-005's original characterization of the finding; see `confidenceMerge.ts`'s own docblock.
 
-**`IntelligenceOS.recordCorrection()` (or an `IIntelligenceProvider` equivalent) does not exist.** Unchanged this update. `FeedbackProcessor` can *handle* `intelligence.user.correction` if something emits it, but nothing in this codebase currently does — the emitter side of this capability is unbuilt. This is a public `IIntelligenceProvider`/`IntelligenceOSProvider` contract addition and deserves a considered decision about method signature and versioning — the same treatment `ingestWorkspaceConfiguration()` received this update (§3, third session) once its own gap became the higher-priority item. See `ARCHITECTURE.md` §11 Rule 7.
+**`RelationshipIntelligenceDomain`'s activation-trigger counting logic — built (fifth session).** `ArtifactIntelligenceDomain.countArtifactsWithNamedRecipients()` and `RelationshipIntelligenceDomain.checkActivationTrigger()` give a real, tested answer to "has the Phase 2 trigger fired" (Contracts §J.3: ≥3 external artifacts with named recipients, or an explicit onboarding signal). **Still true, and unchanged by this addition:** every method on `RelationshipIntelligenceDomain` besides the new check still throws `DomainNotActivatedError` regardless of what the check returns — no onboarding flow that could supply the explicit-signal half exists anywhere in this codebase yet, and building real named-relationship storage/read paths remains separate, larger Phase 2 feature work, not attempted this session.
 
-### Milestone 4 migration is still incomplete relative to what `ADR-002` describes
+**`db/queries/` — resolved (fifth session).** The six empty placeholder files are deleted. Nothing imported from them; if a future contributor hits real query-builder complexity, the directory can be reintroduced with a real example.
 
-Unchanged this update, and re-verified: `packages/intelligence-os/src/dev/serve.ts` still exists (still works), `package.json` still has its `serve` script and `dotenv`/`tsx` devDependencies, and `check-boundaries.mjs` still excludes `src/dev/**` from `RULE-IOS-ISOLATION`. The structural duplication itself (the file, the script, the boundary-check carve-out) is unchanged. See [`ADR-002`](./adr/ADR-002-apps-runtime-layer.md)'s addenda for the full record.
+**`IntelligenceOS.recordCorrection()` — built (fifth session).** Added to `IIntelligenceProvider`/`IntelligenceOSProvider` as the considered, separately-reviewed decision this document previously said it deserved (`ARCHITECTURE.md` §11 Rule 7), following the exact treatment `ingestWorkspaceConfiguration()` received. See §3, fifth session, item 3.
+
+### Milestone 4 migration relative to what `ADR-002` describes — resolved (fifth session)
+
+`packages/intelligence-os/src/dev/serve.ts` is removed, along with its `package.json` `serve` script and `dotenv`/`tsx` devDependencies, and `check-boundaries.mjs`'s `src/dev/**` carve-out. `RULE-IOS-ISOLATION` now applies to all of `packages/intelligence-os/src` uniformly. `apps/api/src/server.ts`/`apps/api/api/cognition.ts` are the one remaining launcher pair, as `ADR-002` originally specified. See [`ADR-002`](./adr/ADR-002-apps-runtime-layer.md)'s fourth addendum for the full record, including the one bullet from `ADR-002` §3 that remains intentionally not matched verbatim (a superseded-by-a-working-alternative case, not an undone step).
 
 ### Cross-repository contract
 
-**`@platform/cognition-contract` is physically duplicated** between this repository and BrandOS's, with no shared registry to resolve against. Unchanged this update. See `PLATFORM_CONTRACT.md` §4.
+**`@platform/cognition-contract` is physically duplicated** between this repository and BrandOS's, with no shared registry to resolve against. Unchanged this update — needs coordinated, cross-repository agreement with BrandOS on a shared-registry or git-workspace-protocol resolution mechanism; not a decision this repository can make alone. See `PLATFORM_CONTRACT.md` §4.
+
+**`ProjectInput.brandosProjectId`/`getProjectByBrandosId()` still carry one consumer's name — reclassified this update (fifth session).** Previously recorded as blocked purely on "needs a live DB migration." On reflection, that undersold the real blocker: this is a public-contract field BrandOS's live integration sends today, so renaming it is a breaking cross-repository API change needing coordinated BrandOS-side adoption — the same category of blocker as the `cognition-contract` de-duplication directly above, not a same-repository decision. Left unrenamed.
 
 **Two open contract-design questions:** how BrandOS's raw-signal review UI gets a list to render (still open, no target direction decided), and how a workspace's explicit, user-set brand-voice/identity configuration reaches IntelligenceOS at all (decided, implemented, **and now reachable** — `ADR-003` §2.4, `IntelligenceOS.ingestWorkspaceConfiguration()`, promoted onto `IIntelligenceProvider` and `POST /v1/workspace-configuration` this update, closing Compliance Audit finding D-4). Whether *BrandOS's own* admin UI calls it yet is outside this repository's scope to verify. Neither `CognitionProvider` nor `CognitionContext` changed in this update's source snapshot — the new route is a sibling to `CognitionProvider`, following the same precedent `/v1/knowledge/ingest` already set, not a sixth `CognitionProvider` operation. Documented in `packages/cognition-contract/README.md` and summarized in `PLATFORM_CONTRACT.md` §3.
 
@@ -118,7 +323,7 @@ Unchanged this update, and re-verified: `packages/intelligence-os/src/dev/serve.
 
 ### Documentation and file placement
 
-**One `AGENT_CONTEXT.md` file is still misplaced.** Unchanged this update: `packages/intelligence-os`'s package-root `AGENT_CONTEXT.md` still lives at the repository root instead of at `packages/intelligence-os/AGENT_CONTEXT.md`.
+**`AGENT_CONTEXT.md` placement — resolved (fifth session).** `packages/intelligence-os`'s package-root `AGENT_CONTEXT.md` moved from the repository root to `packages/intelligence-os/AGENT_CONTEXT.md`.
 
 **Provenance comments will continue to rot slowly.** Unchanged, low-urgency, best fixed incrementally as files are touched for unrelated reasons.
 
@@ -126,21 +331,19 @@ Unchanged this update, and re-verified: `packages/intelligence-os/src/dev/serve.
 
 ### Tooling and process
 
-**No shared root `tsconfig.base.json`, no lint configuration, no CI workflow.** Unchanged this update. `.gitignore` and `.env.example` remain present and resolved from an earlier pass.
+**Root `tsconfig.base.json`, lint configuration, and CI workflow — all built (fifth session).** `tsconfig.base.json` holds the compiler options every package's `tsconfig.json` now extends rather than repeating. `eslint.config.mjs` is a workspace-wide flat config (`pnpm lint`, folded into `pnpm validate`); 0 errors, 8 pre-existing warnings in test-file dead code left as-is. `.github/workflows/ci.yml` runs `pnpm validate` + `pnpm test` on every PR/push — no live infrastructure required. `.gitignore` and `.env.example` remain present and resolved from an earlier pass.
 
-**Test coverage: partially addressed this update, not closed.** `HypothesisEngine`, `LearningValidator.evaluate()` (as distinct from `.maybeConfirm()`, below), `ProfileBuilder`, and `ProjectContextBuilder` still have no dedicated, fully-isolated unit-test file of their own — only indirect coverage via `pipeline-integration.test.ts` and `blueprint.test.ts`. **What did change:** `LearningValidator.maybeConfirm()` — previously untested along with the rest of these classes — now has a dedicated test file (`tests/unit/pipeline/UserCorrection.test.ts`, 7 tests), added as part of connecting the correction-handling capability in §3. `vitest.config.ts`'s coverage thresholds (`lines: 40, branches: 30`, still annotated as a Sprint 0 default) were left unchanged for the same reason as before — raising them is appropriate once the remaining three classes' coverage gap is closed, not before.
+**Test coverage gap — closed (fifth session).** `HypothesisEngine`, `LearningValidator.evaluate()`, `ProfileBuilder`'s pre-existing logic, and `ProjectContextBuilder` each now have a dedicated, fully-isolated unit-test file (91 new tests total — see §3, fifth session, item 2). `vitest.config.ts`'s coverage thresholds raised accordingly, from the Sprint 0 defaults (`lines: 40, branches: 30`) to `lines: 85, branches: 78` — real measured coverage is ~89% lines / ~84% branches, thresholds sit a few points below as headroom rather than at the ceiling.
 
 **The five seeded universal artifact patterns are undocumented outside raw SQL.** Unchanged this update.
 
-**`ProjectInput.brandosProjectId` / `getProjectByBrandosId()` still carry one consumer's name.** Unchanged this update — still a live DB column rename that should be bundled with the next live-DB migration pass rather than done in isolation.
-
 ## 6. Recommended next steps
 
-Roughly in order of leverage relative to effort — see [`ROADMAP.md`](./ROADMAP.md) for the longer-horizon picture:
+Roughly in order of leverage relative to effort — see [`ROADMAP.md`](./ROADMAP.md) for the longer-horizon picture. The IntelligenceOS Completion Plan's engineering/technical-debt/operational-preparation scope (fifth session, §3) is now closed; what remains is genuinely blocked on something outside this repository, or is a Product Question by design:
 
-1. **Design and close Compliance Audit D-5** — give `getContext()` (or a sibling read) a real path from ordinary document-extracted Knowledge (`FrameworkExtractionResult`/`VocabularyExtractionResult`) into `voice`/`identity`, with an explicit confidence/precedence rule relative to explicit configuration and Learnings. The largest remaining gap between ADR-003's text and its implementation — see §3's third session and the Known Issues entry above.
-2. **Build the emitter side of `intelligence.user.correction`** (`IntelligenceOS.recordCorrection()` or an `IIntelligenceProvider` equivalent) — the handler side is built and tested but has no caller.
-3. Consolidate the three independent confidence-ordered field-merge implementations (Compliance Audit D-2: `identitySynthesis.ts`, `voiceMapping.ts`, `NarrativePlanner`) into one shared helper, next time any of the three is touched.
-4. Decide `ADR-002`'s incomplete migration one way or the other (finish it, or amend the ADR further) — the routes have converged, but the structural duplication (two files, two boundary-check carve-outs) hasn't.
-5. Close the remaining test-coverage gap (`HypothesisEngine`, `LearningValidator.evaluate()`, `ProfileBuilder`, `ProjectContextBuilder` still lack a dedicated unit-test file of their own for their pre-existing logic), then raise `vitest.config.ts`'s thresholds off their Sprint-0 defaults.
-6. Apply `schema.sql`, `migrations/002_workspace_learning_owner.sql`, and `migrations/004_subject_centric_intelligence.sql` to a real Supabase project, and run the live-database checks in §4, once infrastructure access exists.
+1. **Scope `audience`/`guidance`** (`CognitionContext`'s two remaining originally-unimplemented sections, not addressed by ADR-004) — each needs its own first-principles pass; a Product Question (ADR-005 §6), not an engineering task.
+2. **Apply `schema.sql`, `migrations/002_workspace_learning_owner.sql`, `migrations/004_subject_centric_intelligence.sql`, and `migrations/005_cognitive_consolidation.sql` to a real Supabase project**, and run the live-database checks in §4, once infrastructure access exists. Blocked purely on infrastructure access — no design work remains.
+3. **Resolve `@platform/cognition-contract`'s cross-repository duplication** — needs coordinated agreement with BrandOS's maintainers on a shared-registry or git-workspace-protocol mechanism; not a decision this repository can make alone.
+4. **Coordinate the `ProjectInput.brandosProjectId`/`getProjectByBrandosId()` rename with BrandOS** — a breaking public-contract change to a field BrandOS's live integration sends today; needs BrandOS-side adoption timing, not just a schema migration.
+5. **Run the real (non-dry-run) `npm publish`** for `@intelligence-os/core` and `@intelligence-os/shared-types` once registry credentials are available — the dry run (fifth session) already confirmed both package cleanly.
+6. **Multi-Subject identity composition, positioning's Knowledge-side input** — both Product Questions (ADR-005 §6), not engineering tasks.

@@ -7,7 +7,8 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:coverage": "pnpm -r test:coverage",
-    "validate": "pnpm -r typecheck && pnpm --filter @intelligence-os/core check:boundaries",
+    "lint": "eslint .",
+    "validate": "pnpm -r typecheck && pnpm --filter @intelligence-os/core check:boundaries && pnpm lint",
     "dev:api": "pnpm --filter @intelligence-os/api dev",
     "demo": "pnpm --filter @intelligence-os/demo start",
     "clean": "pnpm -r clean"
@@ -15,5 +16,11 @@
   "engines": {
     "node": ">=22.0.0",
     "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9",
+    "eslint": "9",
+    "globals": "^17.7.0",
+    "typescript-eslint": "8"
   }
 }

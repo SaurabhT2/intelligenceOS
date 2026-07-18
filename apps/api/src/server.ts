@@ -88,14 +88,20 @@ function main(): void {
   // the SDK path. Also, as of the same session's ADR-003 §2.4 closure
   // (audit finding D-4), `intelligenceOS` structurally satisfies the
   // port's now-optional `ingestWorkspaceConfiguration` too, so
-  // POST /v1/workspace-configuration comes free the same way.
+  // POST /v1/workspace-configuration comes free the same way. Cognitive
+  // Platform Evolution Program (Milestone 3, EM-3.1/EM-3.3): the same is
+  // now true of `recordFeedbackEvent`/`recordCorrection` — both were
+  // already real methods on `intelligenceOS`, so POST /v1/intelligence/
+  // feedback and /v1/intelligence/correction come free here too, with no
+  // change to this line.
   const server = createCognitionHttpServer(provider, { apiKey }, intelligenceOS);
 
   server.listen(port, () => {
     console.info(`[api] IntelligenceOS CognitionProvider HTTP API listening on :${port}`);
     console.info('[api] Routes: POST /v1/cognition/resolve, /observe, /review');
     console.info('[api]         GET  /v1/cognition/summary, /health');
-    console.info('[api]         POST /v1/knowledge/ingest');
+    console.info('[api]         POST /v1/knowledge/ingest, /v1/workspace-configuration');
+    console.info('[api]         POST /v1/intelligence/feedback, /v1/intelligence/correction');
     console.info(
       `[api] BrandOS-side config: INTELLIGENCE_OS_API_URL=http://localhost:${port} INTELLIGENCE_OS_API_KEY=<matches COGNITION_API_KEY>`
     );

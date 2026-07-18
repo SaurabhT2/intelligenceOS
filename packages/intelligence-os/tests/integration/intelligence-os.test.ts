@@ -210,6 +210,81 @@ describe('Sprint 0 deferred methods', () => {
     expect(assetId.length).toBeGreaterThan(0);
   });
 
+  // ── Completion Mission (RCA finding — double-processing / empty-content
+  // overwrite) ──────────────────────────────────────────────────────────────
+  // ingestKnowledgeAsset() used to (a) call KnowledgeProcessor.process()
+  // directly with the real rawContent, AND (b) emit
+  // 'intelligence.knowledge_asset.uploaded', which KnowledgeProcessor itself
+  // is subscribed to and which re-invoked process() a second time with a
+  // hardcoded empty string — silently overwriting the first, correct
+  // extraction via persistExtracted()'s upsert-by-id. These tests assert the
+  // asset is now written exactly once, with the real content intact.
+  describe('ingestKnowledgeAsset() — single-write guarantee', () => {
+    const RICH_CONTENT = `
+# Go-To-Market Playbook
+In the discovery phase, our GTM team identifies Ideal Customer Profiles (ICP).
+We apply SWOT analysis to understand competitive positioning.
+Target segments are ranked by TAM, SAM, and SOM metrics across every channel
+we operate in, and our methodology is documented in detail for every team.
+`;
+
+    // The mock Supabase chain is shared across every `.from(table)` call, so
+    // `chain.upsert` also captures the (separate, legitimate) profile-rebuild
+    // upsert that fires for the first-ever asset in a workspace. Filter down
+    // to knowledge_assets rows specifically, identifiable by their unique
+    // `extracted_vocabulary` field.
+    const knowledgeAssetUpserts = (supabase: ReturnType<typeof createMockSupabase>) =>
+      (supabase._chain.upsert.mock.calls as [Record<string, unknown>][])
+        .filter(([row]) => 'extracted_vocabulary' in row);
+
+    it('persists the knowledge asset exactly once (no duplicate/overwriting write)', async () => {
+      const supabase = createMockSupabase();
+      const { instance } = makeIntelligence(supabase);
+
+      await instance.ingestKnowledgeAsset(
+        { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Doc' },
+        RICH_CONTENT,
+      );
+
+      // Exactly one upsert into knowledge_assets — not two.
+      expect(knowledgeAssetUpserts(supabase)).toHaveLength(1);
+    });
+
+    it('the single persisted write reflects the real content, not an empty overwrite', async () => {
+      const supabase = createMockSupabase();
+      const { instance } = makeIntelligence(supabase);
+
+      await instance.ingestKnowledgeAsset(
+        { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Doc' },
+        RICH_CONTENT,
+      );
+
+      const [persistedRow] = knowledgeAssetUpserts(supabase)[0]!;
+      const vocab = persistedRow['extracted_vocabulary'] as { termCount: number } | null;
+
+      expect(persistedRow['confidence']).toBeGreaterThan(0.20); // above EMPTY_CONTENT_CONFIDENCE
+      expect(persistedRow['is_current']).toBe(true);
+      expect(vocab).not.toBeNull();
+      expect(vocab!.termCount).toBeGreaterThan(0);
+    });
+
+    it('an empty-content ingest is persisted but never marked current', async () => {
+      const supabase = createMockSupabase();
+      const { instance } = makeIntelligence(supabase);
+
+      await instance.ingestKnowledgeAsset(
+        { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Empty Doc' },
+        '',
+      );
+
+      const upserts = knowledgeAssetUpserts(supabase);
+      expect(upserts).toHaveLength(1);
+      const [persistedRow] = upserts[0]!;
+      expect(persistedRow['confidence']).toBe(0.20);
+      expect(persistedRow['is_current']).toBe(false);
+    });
+  });
+
   it('RelationshipIntelligenceDomain.getRelationship() throws DomainNotActivatedError', async () => {
     const { instance } = makeIntelligence();
     await expect(

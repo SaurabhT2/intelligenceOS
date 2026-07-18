@@ -44,6 +44,10 @@ function makeDeps(overrides: {
     reviewLearningForWorkspace:
       overrides.reviewLearningForWorkspace ??
       vi.fn().mockResolvedValue({ newState: 'ACTIVE', previousState: 'FLAGGED' }),
+    // ADR-004 (Cognitive Consolidation) — ContextBuilder's new dependency;
+    // defaults to "no profile yet", matching every pre-ADR-004 test's
+    // expectations (knowledge/reasoning/positioning all null).
+    getCurrentProfileForSubject: vi.fn().mockResolvedValue(null),
   } as unknown as UserIntelligenceDomain;
 
   const health = {

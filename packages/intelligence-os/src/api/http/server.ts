@@ -16,13 +16,27 @@
  * Plus one Milestone 3, Phase 1 route (Knowledge API), only active when a
  * `KnowledgeIngestPort` is supplied to `createCognitionHttpServer`:
  *
- *   POST /v1/knowledge/ingest   { asset: KnowledgeAssetInput, rawContent? } -> { assetId }
+ *   POST /v1/knowledge/ingest   { asset: KnowledgeAssetInput, rawContent?, existingAssetId? } -> { assetId }
  *
  * Plus one Completion Mission route, only active when the supplied
  * `KnowledgeIngestPort` implements `ingestWorkspaceConfiguration` (ADR-003
  * §2.4, closing audit finding D-4):
  *
  *   POST /v1/workspace-configuration   WorkspaceConfigurationInput -> { assetId }
+ *
+ * Plus two Cognitive Platform Evolution Program routes (Milestone 3 —
+ * Experience Loop, EM-3.1/EM-3.3), same optional-port pattern, only active
+ * when the supplied `KnowledgeIngestPort` implements
+ * `recordFeedbackEvent`/`recordCorrection`:
+ *
+ *   POST /v1/intelligence/feedback     FeedbackEvent        -> 204
+ *   POST /v1/intelligence/correction   UserCorrectionInput  -> 204
+ *
+ * Both wrap `IntelligenceOS` methods that were already real, tested, and
+ * completely unreachable over HTTP before this program — the single
+ * largest finding of the audit that produced this program (see
+ * `IntelligenceOS.recordFeedbackEvent()`/`recordCorrection()`'s own
+ * docblocks).
  *
  * This is deliberately NOT part of the CognitionProvider contract (see
  * `KnowledgeIngestPort`'s own docblock below) — it exists so BrandOS's
@@ -56,7 +70,8 @@ import type {
   ObservationInput,
   CognitionReviewDecision,
 } from '@platform/cognition-contract';
-import type { KnowledgeAssetInput, WorkspaceConfigurationInput } from '../../types/domains';
+import type { KnowledgeAssetInput, WorkspaceConfigurationInput, UserCorrectionInput } from '../../types/domains';
+import type { FeedbackEvent } from '@intelligence-os/shared-types';
 import { EntityNotFoundError, ValidationError } from '../../errors';
 
 export interface CognitionHttpServerOptions {
@@ -67,7 +82,14 @@ export interface CognitionHttpServerOptions {
 }
 
 /**
- * Milestone 3, Phase 1 (Knowledge API).
+ * Milestone 3, Phase 1 (Knowledge API), later expanded by the Cognitive
+ * Platform Evolution Program (Milestone 3 — Experience Loop, EM-3.1/EM-3.3)
+ * to also carry feedback/correction recording. The name `KnowledgeIngestPort`
+ * is now slightly narrower than its contents — kept as-is rather than
+ * renamed, to avoid an unforced breaking change to an exported type for a
+ * cosmetic reason; every member is still "a non-CognitionProvider
+ * IntelligenceOS write capability BrandOS needs over HTTP," which was
+ * always the real unifying idea, not "knowledge" specifically.
  *
  * `IntelligenceOS.ingestKnowledgeAsset()` is not part of `CognitionProvider`
  * (that interface is scoped to the cognition read/observe contract only —
@@ -79,7 +101,18 @@ export interface CognitionHttpServerOptions {
  * (constructed with just a `CognitionProvider`) keeps compiling unchanged.
  */
 export interface KnowledgeIngestPort {
-  ingestKnowledgeAsset(asset: KnowledgeAssetInput, rawContent?: string): Promise<string>;
+  /**
+   * `existingAssetId` — Cognitive Platform Evolution Program, EM-2.2/
+   * EM-2.6. Optional so every existing caller keeps compiling unchanged.
+   * When supplied, updates that asset in place (upsert by id) instead of
+   * creating a new one — see `IntelligenceOS.ingestKnowledgeAsset()`'s
+   * docblock.
+   */
+  ingestKnowledgeAsset(
+    asset: KnowledgeAssetInput,
+    rawContent?: string,
+    existingAssetId?: string,
+  ): Promise<string>;
   /**
    * ADR-003 §2.4 — optional so every existing caller of
    * `createCognitionHttpServer` keeps compiling unchanged, exactly like
@@ -88,6 +121,27 @@ export interface KnowledgeIngestPort {
    * method existed with zero reachable callers, including over HTTP).
    */
   ingestWorkspaceConfiguration?(input: WorkspaceConfigurationInput): Promise<string>;
+
+  /**
+   * EM-3.1 (Cognitive Platform Evolution Program, Milestone 3 — Feedback
+   * Event HTTP Route). Same optional-port pattern as
+   * ingestWorkspaceConfiguration above. Wires `POST /v1/intelligence/feedback`
+   * when supplied. `IntelligenceOS.recordFeedbackEvent()` was already real
+   * and tested — this closes the audit's largest single finding: the
+   * method had zero HTTP reachability, so BrandOS's `/api/feedback`
+   * capture (accept/edit/reject/deploy signal, with structured EditDiff)
+   * had nowhere to send what it already collects.
+   */
+  recordFeedbackEvent?(event: FeedbackEvent): Promise<void>;
+
+  /**
+   * EM-3.3 (Cognitive Platform Evolution Program, Milestone 3 — Correction
+   * HTTP Route). Same pattern. Wires `POST /v1/intelligence/correction`.
+   * `IntelligenceOS.recordCorrection()`'s own docblock calls corrections
+   * "the highest-authority signal in the system" — this was, like
+   * recordFeedbackEvent, fully implemented and completely unreachable.
+   */
+  recordCorrection?(input: UserCorrectionInput): Promise<void>;
 }
 
 const MAX_BODY_BYTES = 1_000_000; // 1MB — generous for this contract's small payloads.
@@ -134,9 +188,10 @@ function isAuthorized(req: IncomingMessage, apiKey: string): boolean {
  * summarizeCognition, checkHealth), so any conforming implementation
  * works, including IntelligenceOS.asCognitionProvider()'s return value
  * and test doubles. (Previously typed to CognitionProviderImpl
- * specifically; caught as a real typecheck failure once
- * src/dev/serve.ts — new in the Milestone 3+ Engineering Workflow Audit —
- * became the first caller to pass a plain CognitionProvider-typed value.)
+ * specifically; caught as a real typecheck failure once this package's
+ * former dev-only launcher — since removed and superseded by
+ * `apps/api/src/server.ts`, see ADR-002 — became the first caller to pass
+ * a plain CognitionProvider-typed value.)
  */
 export function createCognitionHttpServer(
   provider: CognitionProvider,
@@ -198,9 +253,10 @@ export function createCognitionHttpServer(
 
       // ── Milestone 3, Phase 1 — Knowledge API ──────────────────────────
       // Only wired up if a KnowledgeIngestPort was provided (see
-      // src/dev/serve.ts). Future-compatible sibling routes
-      // (reindex/delete/status) are intentionally NOT stubbed here per
-      // "only implement what is necessary now."
+      // apps/api/src/server.ts and apps/api/api/cognition.ts). Future-
+      // compatible sibling routes (reindex/delete/status) are
+      // intentionally NOT stubbed here per "only implement what is
+      // necessary now."
       if (req.method === 'POST' && url.pathname === '/v1/knowledge/ingest') {
         if (!knowledge) {
           sendJson(res, 501, { error: 'knowledge ingestion not configured on this server' });
@@ -209,12 +265,17 @@ export function createCognitionHttpServer(
         const body = JSON.parse(await readBody(req)) as {
           asset: KnowledgeAssetInput;
           rawContent?: string;
+          existingAssetId?: string;
         };
         if (!body?.asset) {
           sendJson(res, 400, { error: 'asset is required' });
           return;
         }
-        const assetId = await knowledge.ingestKnowledgeAsset(body.asset, body.rawContent);
+        const assetId = await knowledge.ingestKnowledgeAsset(
+          body.asset,
+          body.rawContent,
+          body.existingAssetId,
+        );
         sendJson(res, 201, { assetId });
         return;
       }
@@ -237,6 +298,40 @@ export function createCognitionHttpServer(
         }
         const assetId = await knowledge.ingestWorkspaceConfiguration(body);
         sendJson(res, 201, { assetId });
+        return;
+      }
+
+      // ── EM-3.1 (Cognitive Platform Evolution Program) — Feedback Event ──
+      // Same optional-port pattern as /v1/knowledge/ingest and
+      // /v1/workspace-configuration above.
+      if (req.method === 'POST' && url.pathname === '/v1/intelligence/feedback') {
+        if (!knowledge?.recordFeedbackEvent) {
+          sendJson(res, 501, { error: 'feedback event recording not configured on this server' });
+          return;
+        }
+        const body = JSON.parse(await readBody(req)) as FeedbackEvent;
+        if (!body?.userId || !body?.artifactId || !body?.eventType) {
+          sendJson(res, 400, { error: 'userId, artifactId, and eventType are required' });
+          return;
+        }
+        await knowledge.recordFeedbackEvent(body);
+        res.writeHead(204).end();
+        return;
+      }
+
+      // ── EM-3.3 (Cognitive Platform Evolution Program) — Correction ──────
+      if (req.method === 'POST' && url.pathname === '/v1/intelligence/correction') {
+        if (!knowledge?.recordCorrection) {
+          sendJson(res, 501, { error: 'correction recording not configured on this server' });
+          return;
+        }
+        const body = JSON.parse(await readBody(req)) as UserCorrectionInput;
+        if (!body?.userId || !body?.correctionType) {
+          sendJson(res, 400, { error: 'userId and correctionType are required' });
+          return;
+        }
+        await knowledge.recordCorrection(body);
+        res.writeHead(204).end();
         return;
       }
 

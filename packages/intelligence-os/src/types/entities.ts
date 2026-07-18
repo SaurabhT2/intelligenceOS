@@ -75,6 +75,42 @@ export type DecayRate = 'none' | 'slow' | 'standard' | 'fast';
 
 // ---- Intelligence Profile + Archetype ----------------------------------------
 
+/**
+ * ADR-004 (Cognitive Consolidation) — provenance-carrying element of a
+ * `SynthesizedCollection`. Every item traces to exactly one concrete
+ * `Learning` or `KnowledgeAsset` row (`sourceId`) — never a blended,
+ * anonymous aggregate. See ADR-004 §7.4.
+ */
+export interface SynthesizedItem<T> {
+  value: T;
+  /** 0-1, same scale as `Learning.confidence` / `KnowledgeAsset.confidence`. */
+  confidence: number;
+  /** Which of the two ADR-003 inputs this item came from. */
+  sourceKind: 'knowledge' | 'experience';
+  /** The specific `Learning.id` or `KnowledgeAsset.id` this item was derived from. */
+  sourceId: string;
+  /** ISO 8601 timestamp of the source row's `createdAt` — used for recency tie-breaking (ADR-004 §7.3). */
+  sourceObservedAt: string;
+}
+
+/**
+ * ADR-004 (Cognitive Consolidation) — shared shape for every
+ * `IntelligenceProfile` field that represents a *collection* of synthesized
+ * items, combined via the union-with-provenance rule (ADR-004 §7.1), as
+ * opposed to `voiceSummary`/`goalSummary`/etc. below, which remain plain
+ * field-merge `Record`s combined via the override rule (ADR-003/ADR-004
+ * §7.2). The two shapes deliberately coexist on this entity — see ADR-004
+ * §0.2/§4.6 for why retrofitting the older fields to this shape is
+ * separately-scoped follow-up work, not part of this change.
+ */
+export interface SynthesizedCollection<T> {
+  items: SynthesizedItem<T>[];
+  /** The maximum confidence across `items` — not an average (ADR-004 §4.2: a highly-confident single item shouldn't be diluted by several low-confidence ones sharing the same field). */
+  confidence: number;
+  /** True when `items` contains a real, origin-signaled conflict (ADR-004 §7.3) — reused from each source's own existing contradiction signal, never computed fresh at this layer. */
+  hasConflict: boolean;
+}
+
 export interface IntelligenceProfile {
   id: string;
   /** ADR-003: nullable/discriminated the same way as `Learning.userId` — see that field's doc comment and `types/subject.ts`. */
@@ -92,7 +128,14 @@ export interface IntelligenceProfile {
   constraintSummary: Record<string, unknown> | null;
   preferenceSummary: Record<string, unknown> | null;
   expertiseDomains: Record<string, unknown> | null;
+  /** ADR-004: computation corrected to also read Knowledge (`KnowledgeAsset.extractedVocabulary`), not only Experience — same field, same type, see ADR-004 §5. */
   vocabularySnapshot: Record<string, unknown> | null;
+  /** ADR-004 (Cognitive Consolidation) — recurring themes and named frameworks. Sourced from Learnings tagged `intellectual_frameworks`/`knowledge_assets` AND `KnowledgeAsset.extractedFrameworks`. See ADR-004 §5.2. */
+  knowledgeSummary: SynthesizedCollection<{ name: string; description: string }> | null;
+  /** ADR-004 (Cognitive Consolidation) — declared/demonstrated reasoning and decision-making conclusions. Sourced from Learnings tagged `strategic_thinking_patterns`/`decision_making_style`/`operating_principles` AND `KnowledgeAsset.extractedFrameworks` items categorized 'analytical'/'evaluative'. See ADR-004 §5.3. */
+  reasoningSummary: SynthesizedCollection<{ statement: string }> | null;
+  /** ADR-004 (Cognitive Consolidation) — market/category standing. Experience-only at launch (ADR-004 §0.1): sourced from Learnings tagged `competitive_intelligence`. No Knowledge-side extractor exists yet for this field — see ADR-004 §5 for why this is a deliberate, documented scope decision, not an oversight. */
+  positioningSummary: SynthesizedCollection<{ statement: string }> | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -271,7 +314,7 @@ export interface ArtifactExemplar {
 // ---- Knowledge Asset -------------------------------------------------------------
 
 export type KnowledgeAssetOwnerType = 'user' | 'project' | 'workspace';
-export type KnowledgeAssetType = 'playbook' | 'framework' | 'methodology' | 'template' | 'reference';
+export type KnowledgeAssetType = 'playbook' | 'framework' | 'methodology' | 'template' | 'reference' | 'visual_asset';
 
 export interface KnowledgeAsset {
   id: string;

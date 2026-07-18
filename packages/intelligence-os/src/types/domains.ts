@@ -38,13 +38,27 @@ export interface ProjectInput {
 /**
  * Input for IntelligenceOS.ingestKnowledgeAsset() (Sprint 3).
  * Defined here in Sprint 0 so the public API surface is stable.
+ *
+ * `'visual_asset'` added by the Cognitive Platform Evolution Program,
+ * EM-2.4, per the Platform Ownership Review: "this asset is an image" is a
+ * media-type distinction every future client needs identically, not a
+ * BrandOS-flavored taxonomy value (contrast with the other five values,
+ * which are BrandOS's own content vocabulary and were correctly NOT
+ * generalized further — see EM-2.3's verdict in that review).
+ * `VisualFeatureExtractor` requires no code change for this — its
+ * `isVisualAsset` gating is already based on detected color/typography
+ * signal count (`HEX_COLOR_RE`/`FONT_FAMILY_RE` matches), not on
+ * `assetType`, so this value is additive classification metadata, not a
+ * new code path. See that file's header and `KnowledgeProcessor.process()`,
+ * which already calls the visual extractor unconditionally for every
+ * asset.
  */
 export interface KnowledgeAssetInput {
   ownerType: 'user' | 'project' | 'workspace';
   userId?: string | null;
   projectId?: string | null;
   workspaceId?: string | null;
-  assetType: 'playbook' | 'framework' | 'methodology' | 'template' | 'reference';
+  assetType: 'playbook' | 'framework' | 'methodology' | 'template' | 'reference' | 'visual_asset';
   title: string;
   sourceFileRef?: string | null;
 }
@@ -54,7 +68,7 @@ export interface KnowledgeAssetFilter {
   projectId?: string;
   workspaceId?: string;
   ownerType?: 'user' | 'project' | 'workspace';
-  assetType?: 'playbook' | 'framework' | 'methodology' | 'template' | 'reference';
+  assetType?: 'playbook' | 'framework' | 'methodology' | 'template' | 'reference' | 'visual_asset';
   isCurrent?: boolean;
 }
 
@@ -165,4 +179,38 @@ export interface WorkspaceConfigurationInput {
     namedFrameworks?: string[];
     preferredLength?: 'short' | 'medium' | 'long';
   } | null;
+}
+
+// ── User Correction ───────────────────────────────────────────────────────────
+
+/**
+ * Input for `IntelligenceOS.recordCorrection()` — the emitter half of
+ * `intelligence.user.correction` (Contracts B.2: corrections are the
+ * highest-authority signal in the system, bypassing the Signal →
+ * Observation → Hypothesis quarantine gate entirely). The handler side
+ * (`FeedbackProcessor.processCorrection()` → `LearningValidator.maybeConfirm()`)
+ * has existed and been tested since before this method — see
+ * `tests/unit/pipeline/UserCorrection.test.ts` — this type and the method
+ * below are the considered, separately-reviewed public-contract addition
+ * `ARCHITECTURE.md` §11 Rule 7 asks for, following the same additive,
+ * non-breaking treatment `ingestWorkspaceConfiguration()` received.
+ *
+ * Deliberately the same field set as `UserCorrectionPayload`
+ * (`types/events.ts`) minus `occurredAt`, which `recordCorrection()` stamps
+ * itself — the same relationship `FeedbackEvent` (a consumer-facing input
+ * type) has to its own emitted event payload.
+ */
+export interface UserCorrectionInput {
+  userId: string;
+  correctionType: 'vocabulary' | 'tone' | 'style' | 'fact' | 'goal' | 'other';
+  /**
+   * The taxonomy category the correction applies to. `LearningValidator
+   * .maybeConfirm()` can only confirm an existing VALIDATED Learning for a
+   * specific category, so a correction with no category has nothing to
+   * confirm against and is a documented no-op, not an error — see
+   * `FeedbackProcessor.processCorrection()`.
+   */
+  taxonomyCategory?: string | null;
+  correctedValue: unknown;
+  context?: string | null;
 }

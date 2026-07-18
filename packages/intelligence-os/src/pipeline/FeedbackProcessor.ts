@@ -48,10 +48,11 @@ import type { FeedbackEventPayload, UserCorrectionPayload } from '../types/event
 import type { IntelligenceEventBus } from '../events/IntelligenceEventBus';
 import type { UserIntelligenceDomain } from '../domains/UserIntelligenceDomain';
 import type { ArtifactIntelligenceDomain } from '../domains/ArtifactIntelligenceDomain';
+import type { KnowledgeIntelligenceDomain } from '../domains/KnowledgeIntelligenceDomain';
 import type { TaxonomyCategory } from '../types/entities';
 import type { PipelineRunResult, PipelineStageError } from './types';
 import type { ObservationInput } from '@platform/cognition-contract';
-import { userSubject, type SubjectRef } from '../types/subject';
+import { userSubject, workspaceSubject, type SubjectRef } from '../types/subject';
 import { SignalExtractor } from './SignalExtractor';
 import { ObservationBuilder } from './ObservationBuilder';
 import { HypothesisEngine } from './HypothesisEngine';
@@ -71,12 +72,14 @@ export class FeedbackProcessor {
     private readonly bus: IntelligenceEventBus,
     private readonly userDomain: UserIntelligenceDomain,
     private readonly artifactDomain: ArtifactIntelligenceDomain,
+    /** ADR-004 (Cognitive Consolidation) — passed through to this class's internal ProfileBuilder, mirroring userDomain/artifactDomain's existing pattern. */
+    private readonly knowledgeDomain: KnowledgeIntelligenceDomain,
   ) {
     this.signalExtractor   = new SignalExtractor();
     this.observationBuilder = new ObservationBuilder();
     this.hypothesisEngine  = new HypothesisEngine(userDomain);
     this.learningValidator = new LearningValidator(userDomain);
-    this.profileBuilder    = new ProfileBuilder(userDomain, bus);
+    this.profileBuilder    = new ProfileBuilder(userDomain, bus, knowledgeDomain);
   }
 
   /**
@@ -96,6 +99,17 @@ export class FeedbackProcessor {
 
     this.bus.on('intelligence.user.correction', async (payload) => {
       await this.processCorrection(payload as UserCorrectionPayload);
+    });
+
+    // ADR-004 (Cognitive Consolidation) §3.2 — the Knowledge Pipeline's
+    // existing extraction-milestone event, now also consumed here. Filtered
+    // to entityType === 'knowledge_asset' so a future, different use of
+    // this same event type doesn't silently start triggering profile
+    // rebuilds (see the dedicated test for this filter).
+    this.bus.on('intelligence.signal.extracted', async (payload) => {
+      const p = payload as { entityType?: string };
+      if (p.entityType !== 'knowledge_asset') return;
+      await this.processKnowledgeExtraction(payload as KnowledgeSignalExtractedPayload);
     });
   }
 
@@ -417,6 +431,60 @@ export class FeedbackProcessor {
       return { confirmed: false };
     }
   }
+
+  /**
+   * ADR-004 (Cognitive Consolidation) §3.2, §12.1 — the fourth
+   * FeedbackProcessor entry point, driving straight to a profile
+   * rebuild-trigger check rather than through Stages 1-5
+   * (Signal/Observation/Hypothesis/Learning), which don't apply to
+   * Knowledge — Knowledge doesn't require corroboration, only provenance
+   * (ADR-003 §2.4).
+   *
+   * Resolves the correct SubjectRef from the payload's ownerType/
+   * workspaceId/userId (added to `intelligence.signal.extracted`'s
+   * emission alongside this change — see `KnowledgeProcessor.ts`'s
+   * implementation note), evaluates
+   * `ProfileBuilder.shouldRebuildForSubjectFromKnowledge()`, and calls
+   * `rebuildForSubject()` if warranted. Never throws — a failed rebuild
+   * check/execution should not surface as an uncaught rejection on the
+   * event bus, matching `processCorrection()`'s existing convention.
+   */
+  async processKnowledgeExtraction(payload: KnowledgeSignalExtractedPayload): Promise<{ rebuilt: boolean }> {
+    try {
+      const subject: SubjectRef =
+        payload.ownerType === 'workspace' && payload.workspaceId
+          ? workspaceSubject(payload.workspaceId)
+          : userSubject(payload.userId);
+
+      const decision = await this.profileBuilder.shouldRebuildForSubjectFromKnowledge(subject, payload.entityId);
+      if (!decision.shouldRebuild) {
+        return { rebuilt: false };
+      }
+
+      await this.profileBuilder.rebuildForSubject(subject, ['knowledge']);
+      return { rebuilt: true };
+    } catch {
+      // Best-effort, matching processCorrection()'s convention above.
+      return { rebuilt: false };
+    }
+  }
+}
+
+/**
+ * ADR-004 (Cognitive Consolidation) — the shape of
+ * `intelligence.signal.extracted` this class actually reads. A local,
+ * narrower view of `BaseEventPayload` (the event's declared type in
+ * `types/events.ts`) rather than a new event-contract type — the event's
+ * declared shape is intentionally a generic, extensible bag
+ * (`[key: string]: unknown`) for this exact reason.
+ */
+interface KnowledgeSignalExtractedPayload {
+  userId: string;
+  entityId: string;
+  entityType: string;
+  ownerType?: 'user' | 'project' | 'workspace';
+  workspaceId?: string;
+  occurredAt: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

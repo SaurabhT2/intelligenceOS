@@ -85,3 +85,15 @@ This is left as a discrepancy between this decision record and the code, not sil
 ## 9. Second addendum — partial convergence (Completion Mission session, documented at next consolidation)
 
 One of the two launchers' capabilities has since converged: `apps/api`'s two entrypoints now both wire up the Knowledge Ingest route (`KnowledgeIngestPort`) that `dev/serve.ts` had and `apps/api` originally lacked — see `IMPLEMENTATION_STATUS.md`. `apps/api/src/server.ts` and `apps/api/api/cognition.ts` are now functionally equivalent to `dev/serve.ts` for every route both expose. The structural duplication described in §8 above (the file, script, and boundary-check carve-out all still existing) is otherwise unchanged — this addendum narrows what's actually still divergent between the two launchers, it doesn't resolve §8's core finding.
+
+## 10. Third addendum — migration completed (IntelligenceOS Completion Plan execution session)
+
+§3's first, third, and fourth bullets — the ones §8 found undone — are now actually done, closing that gap between this decision record and the code:
+
+- `packages/intelligence-os/src/dev/serve.ts` is removed. Its behavior had already fully converged with `apps/api/src/server.ts` (§9 above), so removal was a pure deletion with no logic to reconcile.
+- `packages/intelligence-os/package.json`'s `"serve"` script and its `dotenv`/`tsx` dev dependencies are removed — nothing else in the package used either.
+- `scripts/check-boundaries.mjs`'s `src/dev/**` carve-out (both the `excludeDirs` argument and its explanatory comment) is removed — `RULE-IOS-ISOLATION` now applies uniformly to all of `packages/intelligence-os/src`, exactly as §3 originally specified.
+- `packages/intelligence-os/README.md`'s "running the dev HTTP server locally" section now points at `apps/api` instead of the removed script.
+
+§3's second bullet (`createCognitionRequestHandler` as a separately-exported handler function) is **not** part of this completion — §8 already correctly identified that the shipped code took a different, equally valid mechanism (`createCognitionHttpServer` plus a `'request'`-event dispatch in the Vercel entrypoint) to reach the same outcome (one implementation, two transports, zero duplicated routing). That's a documentation-vs-code discrepancy about a bullet that was superseded by a working alternative, not an undone migration step, and is correctly left as §8 described it rather than forced to match the original bullet's exact mechanism.
+

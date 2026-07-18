@@ -29,6 +29,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { KnowledgeAsset } from '../types/entities';
 import type { KnowledgeAssetInput, KnowledgeAssetFilter, WorkspaceConfigurationInput } from '../types/domains';
+import type { SubjectRef } from '../types/subject';
 import { DatabaseError, EntityNotFoundError, PhaseNotImplementedError } from '../errors';
 
 /** ADR-003 §2.4 — the stable title `upsertWorkspaceConfiguration()` upserts by, so at most one "current configuration" row exists per workspace. Not user-facing; an internal marker only. */
@@ -132,6 +133,34 @@ export class KnowledgeIntelligenceDomain {
     const { data, error } = await query;
     if (error) throw new DatabaseError('Failed to fetch knowledge assets', error);
     return (data ?? []).map((row: KnowledgeAssetRow) => mapToKnowledgeAsset(row));
+  }
+
+  /**
+   * ADR-004 (Cognitive Consolidation) §2.1 — Subject-generic counterpart to
+   * `getAssets()`, mirroring the `...ForSubject` convention ADR-003
+   * established on `UserIntelligenceDomain`. Returns the given Subject's
+   * (User or Workspace) current (`isCurrent: true`) knowledge assets —
+   * `ProfileBuilder.rebuildForSubject()`'s sole Knowledge read for ADR-004.
+   *
+   * `knowledge_assets` has no `subject_type` discriminator column (unlike
+   * `learnings`/`hypotheses`/`signals`/`profiles` — see `types/subject.ts`'s
+   * header comment); it uses `owner_type`/`user_id`/`workspace_id`/
+   * `project_id` instead, and `project` is a valid `ownerType` with no
+   * `SubjectType` counterpart. This method deliberately only ever maps to
+   * `ownerType: 'user'` or `ownerType: 'workspace'` — project-owned assets
+   * are out of a Subject's scope by definition (ADR-003 only names User and
+   * Workspace as Subjects) and are correctly excluded, not a gap.
+   *
+   * Delegates to `getAssets()` rather than issuing a second query — no
+   * duplicated query logic.
+   */
+  async getCurrentAssetsForSubject(subject: SubjectRef): Promise<KnowledgeAsset[]> {
+    return this.getAssets({
+      ownerType: subject.subjectType,
+      userId: subject.subjectType === 'user' ? subject.subjectId : undefined,
+      workspaceId: subject.subjectType === 'workspace' ? subject.subjectId : undefined,
+      isCurrent: true,
+    });
   }
 
   /**

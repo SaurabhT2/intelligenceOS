@@ -25,7 +25,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { WorkspaceContext, KnowledgeAsset, Learning } from '../types/entities';
+import type { WorkspaceContext, Learning } from '../types/entities';
 import type { DomainType, WorkspaceLearningInput } from '../types/domains';
 import { DatabaseError, PhaseNotImplementedError } from '../errors';
 

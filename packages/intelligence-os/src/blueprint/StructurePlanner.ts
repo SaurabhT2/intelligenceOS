@@ -26,7 +26,7 @@ import type { ArtifactIntelligenceDomain } from '../domains/ArtifactIntelligence
 import type { AudienceCalibration } from '@intelligence-os/shared-types';
 import type { ArtifactPattern } from '../types/entities';
 import type { ProjectContext } from './ProjectContextBuilder';
-import { FALLBACK_SECTIONS, DEFAULT_DEPTH_SPEC } from './internal/defaults';
+import { FALLBACK_SECTIONS } from './internal/defaults';
 
 export interface StructurePlan {
   sections:        BlueprintSection[];

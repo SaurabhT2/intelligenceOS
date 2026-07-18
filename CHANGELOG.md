@@ -10,6 +10,16 @@ current physical duplication across two repositories.
 ## Unreleased
 
 ### Fixed / Added
+- **ADR-004 (Cognitive Consolidation) implemented** (EM-8 — see
+  `docs/adr/ADR-004-cognitive-consolidation.md` and
+  `packages/intelligence-os/CHANGELOG.md`'s `0.4.0` entry): `ProfileBuilder`
+  now synthesizes a Subject's Knowledge and Experience together
+  (`knowledgeSummary`/`reasoningSummary`/`positioningSummary`, plus a
+  corrected `vocabularySnapshot`); `ContextBuilder`/`CognitionContext`
+  expose the result as three new, additive fields (`knowledge`/`reasoning`/
+  `positioning`; `@platform/cognition-contract` bumped to `1.1.0`). Closes
+  Compliance Audit finding D-5. Two implementation-time gaps documented
+  rather than silently resolved — see the ADR's §6.
 - Independent `ADR-003 Compliance Audit` verified against source and closed (see
   `packages/intelligence-os/CHANGELOG.md`'s `0.3.0` entry and
   `docs/IMPLEMENTATION_STATUS.md` §3, third session): closed findings D-1

@@ -1,6 +1,6 @@
 {
   "name": "@intelligence-os/core",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "Intelligence OS — a deterministic user-intelligence layer and artifact-blueprint engine, published as an independently consumable platform SDK.",
   "type": "module",
   "sideEffects": false,
@@ -34,7 +34,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "serve": "tsx src/dev/serve.ts",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "clean": "rimraf dist"
   },
@@ -46,9 +45,7 @@
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@vitest/coverage-v8": "^2.0.5",
-    "dotenv": "^16.4.5",
     "rimraf": "^5.0.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
   },

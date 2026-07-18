@@ -85,7 +85,7 @@ This section is a maintained, current inventory of what each package actually ex
 
 | Export | Kind | Purpose |
 |---|---|---|
-| `CognitionContext` + 5 nested types (`CognitionConfidence`, `VoiceProfile`, `IdentityContribution`, `VisualIdentityProjection`, `CognitionProvenance`) | type | The full return shape of `resolveCognitionContext()` — see `PLATFORM_CONTRACT.md` §3 for which sections are real |
+| `CognitionContext` + 8 nested types (`CognitionConfidence`, `VoiceProfile`, `IdentityContribution`, `VisualIdentityProjection`, `CognitionProvenance`, and ADR-004's `CognitionKnowledgeSection`, `CognitionReasoningSection`, `CognitionPositioningSection`) | type | The full return shape of `resolveCognitionContext()` — see `PLATFORM_CONTRACT.md` §3 for which sections are real |
 | `CognitionRequest`, `ObservationInput`, `CognitionReviewDecision`, `CognitionSummary`, `CognitionHealth` | type | The other 4 methods' request/response shapes |
 | `CognitionProvider` | type | The 5-method interface itself |
 | `COGNITION_CONTRACT_VERSION` | value | Current contract semver (`"1.0.0"`) |
@@ -118,7 +118,7 @@ This section is a maintained, current inventory of what each package actually ex
 | `HealthChecker` | class | Backs `checkHealth()` |
 | `createCognitionHttpServer`, `CognitionHttpServerOptions` | function, type | Builds (but does not start) an `http.Server` exposing the 5 HTTP routes; used by both `apps/api` entrypoints (see `DEPLOYMENT.md`) |
 | `ContextBuilder` | class | Assembles a `CognitionContext` from the domains — the one module allowed to do so |
-| `CognitionProvider`, `CognitionContext`, `CognitionRequest`, `ObservationInput`, `CognitionReviewDecision`, `CognitionSummary`, `CognitionHealth`, `CognitionConfidence`, `VoiceProfile`, `IdentityContribution`, `VisualIdentityProjection`, `CognitionProvenance` | type | Re-exported from `@platform/cognition-contract` |
+| `CognitionProvider`, `CognitionContext`, `CognitionRequest`, `ObservationInput`, `CognitionReviewDecision`, `CognitionSummary`, `CognitionHealth`, `CognitionConfidence`, `VoiceProfile`, `IdentityContribution`, `VisualIdentityProjection`, `CognitionProvenance`, `CognitionKnowledgeSection`, `CognitionReasoningSection`, `CognitionPositioningSection` | type | Re-exported from `@platform/cognition-contract` |
 | `COGNITION_CONTRACT_VERSION`, `createDegradedCognitionContext` | value, function | Re-exported from `@platform/cognition-contract` |
 
 **Optional HTTP port, exported via the `http/server` module but not the root `index.ts`:**

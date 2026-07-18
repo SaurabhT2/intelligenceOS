@@ -30,7 +30,7 @@ import type {
   IntelligenceSummary,
 } from '@intelligence-os/shared-types';
 import type { IIntelligenceProvider } from '../IIntelligenceProvider';
-import type { ProjectInput, KnowledgeAssetInput, WorkspaceConfigurationInput } from '../types/domains';
+import type { ProjectInput, KnowledgeAssetInput, WorkspaceConfigurationInput, UserCorrectionInput } from '../types/domains';
 import { IntelligenceOS, type IntelligenceOSConfig } from '../IntelligenceOS';
 
 export class IntelligenceOSProvider implements IIntelligenceProvider {
@@ -83,5 +83,9 @@ export class IntelligenceOSProvider implements IIntelligenceProvider {
 
   getBrandSummary(params: { userId: string; workspaceId?: string }): Promise<IntelligenceSummary> {
     return this.intelligenceOS.getBrandSummary(params);
+  }
+
+  recordCorrection(input: UserCorrectionInput): Promise<void> {
+    return this.intelligenceOS.recordCorrection(input);
   }
 }

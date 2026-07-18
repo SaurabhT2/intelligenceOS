@@ -55,7 +55,7 @@ interface CognitionProvider {
 | `summarizeCognition` | Reads the same `getWorkspaceLearnings()` data `resolveCognitionContext` uses, projected differently. Fields with no honest workspace-scoped source (`keywords`) are returned `null` rather than guessed. |
 | `checkHealth` | Delegates to `HealthChecker`, which does one `SELECT ... LIMIT 1` against `intelligence.learnings` to confirm the database connection is reachable. Never throws. |
 
-### `CognitionContext` — the real shape, 4 substantive sections
+### `CognitionContext` — the real shape, 7 substantive sections
 
 This is smaller than the target design in §6 below — it currently covers what BrandOS's prompt compiler and governance layer need, not the full constitutional vocabulary:
 
@@ -70,12 +70,19 @@ interface CognitionContext {
   readonly identity: IdentityContribution | null;       // narrativeArcs, argumentationStyle, namedFrameworks, preferredLength, + additive fields
   readonly visualIdentity: VisualIdentityProjection | null;  // primaryColor, fontStyle, layoutDensity
   readonly provenance: CognitionProvenance;             // signalCount, lastConsolidatedAt
+
+  // ADR-004 (Cognitive Consolidation) — additive, contract version 1.1.0
+  readonly knowledge: CognitionKnowledgeSection | null;       // themes: {name, description}[], confidence, hasConflict
+  readonly reasoning: CognitionReasoningSection | null;       // conclusions: {statement}[], confidence, hasConflict
+  readonly positioning: CognitionPositioningSection | null;   // statements: {statement}[], confidence, hasConflict — Experience-only source today
 }
 ```
 
-`knowledge`, `reasoning`, `positioning`, `audience`, `narrative`, and `guidance` — the remaining six sections described in the target design (§6) — **do not exist on the type today.** Do not build against them without first checking `packages/cognition-contract/src/CognitionContext.ts` directly; this document is a snapshot, that file is the source of truth.
+`audience`, `narrative`, and `guidance` — three of the original six missing sections described in the target design (§6) — **do not exist on the type today.** Do not build against them without first checking `packages/cognition-contract/src/CognitionContext.ts` directly; this document is a snapshot, that file is the source of truth.
 
 `identity` exists on the type and, as of ADR-003's implementation, is now genuinely synthesized: `context/identitySynthesis.ts` projects a workspace's identity-relevant, confidence-gated Learnings (professional identity, intellectual frameworks, strategic thinking patterns, personal brand signal) into an `IdentityContribution`. It resolves to `null` when — and only when — a workspace has no identity-relevant Learnings yet at or above the synthesis confidence floor; that is the honest "nothing learned yet" state every new workspace starts in, not an unresolved gap. See [`ADR-003`](./adr/ADR-003-subject-centric-intelligence.md) for the full model.
+
+`knowledge`/`reasoning`/`positioning` exist on the type as of ADR-004 and are thin projections of a Subject's current `IntelligenceProfile` (`pipeline/ProfileBuilder.ts`, off the critical path) — `ContextBuilder` performs zero synthesis for them, the same discipline it already applies to `identity`/`voice`. Each resolves to `null` when the current profile has nothing synthesized yet for that section — the honest "nothing learned or declared yet" state, not a gap. `hasConflict` on each is `true` only when a contributing item's origin already carried a contradiction signal (currently and by design: an Experience-side `Learning.state === 'FLAGGED'` only — Knowledge-side conflict detection is deliberately out of scope until a real consumer need demonstrates what "conflict" should mean for a `KnowledgeAsset`, see `ADR-004` §6); it is never computed fresh at the projection layer. See [`ADR-004`](./adr/ADR-004-cognitive-consolidation.md) for the full model.
 
 ### HTTP transport
 
@@ -137,12 +144,12 @@ The constitutional document governing this contract (formerly a standalone `COGN
 | `visualIdentity` | What does this brand look like, for rendering purposes | Implemented |
 | `confidence` | How much should the rest of this context be trusted | Implemented |
 | `provenance` | Diagnostic-only: how much has been learned, when last consolidated | Implemented |
-| `knowledge` | What has this workspace's cognition learned and retained — consolidated positions, recurring themes, named frameworks | **Not implemented** |
-| `reasoning` | What has been concluded from Knowledge beyond direct recall | **Not implemented** |
-| `positioning` | How this brand stands relative to its market or category | **Not implemented** |
-| `audience` | Who this is being written for | **Not implemented** |
-| `narrative` | What stories and structural patterns this brand uses | **Not implemented** |
-| `guidance` | Directive material that doesn't fit the descriptive sections above | **Not implemented** |
+| `knowledge` | What has this workspace's cognition learned and retained — consolidated positions, recurring themes, named frameworks | **Implemented (ADR-004)** — `IntelligenceProfile.knowledgeSummary`, synthesized from both Knowledge and Experience, projected thinly by `ContextBuilder` |
+| `reasoning` | What has been concluded from Knowledge beyond direct recall | **Implemented (ADR-004)** — `IntelligenceProfile.reasoningSummary`, same mechanism as `knowledge` above |
+| `positioning` | How this brand stands relative to its market or category | **Implemented (ADR-004), Experience-only** — `IntelligenceProfile.positioningSummary`; no Knowledge Pipeline extractor produces competitive/market framing yet, a deliberate, documented scope decision (`ADR-004` §0.1), not a gap |
+| `audience` | Who this is being written for | **Not implemented** — out of scope for `ADR-004`; likely extends the existing `AudienceProfile`/`AudienceCalibrator` rather than `IntelligenceProfile` — see `IMPLEMENTATION_STATUS.md` §5 |
+| `narrative` | What stories and structural patterns this brand uses | **Not implemented** — `ADR-004`'s validation pass folded named-framework/narrative-adjacent content into `knowledge`'s scope rather than treating this as a seventh separate field; revisit if that scoping proves insufficient |
+| `guidance` | Directive material that doesn't fit the descriptive sections above | **Not implemented** — no obvious existing home; needs its own first-principles pass once a real consumer need is demonstrated |
 
 **What is permanently excluded**, at every stage of this contract's evolution: raw or unconsolidated signals, repository or storage references, extractor or resolver identifiers, internal confidence *calculations* (as opposed to the single resulting Confidence value), workspace history beyond what Provenance summarizes, or any field whose presence would let BrandOS reconstruct a judgment instead of receiving one.
 
@@ -167,7 +174,7 @@ These govern how the contract may change, so change never becomes a boundary vio
 - **Adding fields:** new, optional, additive members of an existing section, or an entirely new top-level section. Must be a business outcome, reviewed against the exclusion list above — "we need this for an implementation reason" is never sufficient justification alone.
 - **Backward compatibility:** within a major contract version, no field is ever removed, renamed, or narrowed in type.
 - **Forward compatibility:** every consumer must tolerate unknown fields without error.
-- **Versioning:** `CognitionContext.contractVersion` (currently `1.0.0`) carries the contract's own semantic version, independent of either platform's release versioning. Minor = additive. Major = the only mechanism for a breaking change.
+- **Versioning:** `CognitionContext.contractVersion` (currently `1.1.0` — bumped from `1.0.0` by `ADR-004`'s three additive sections) carries the contract's own semantic version, independent of either platform's release versioning. Minor = additive. Major = the only mechanism for a breaking change.
 - **Deprecation:** a field is marked deprecated in this document first, continues to be populated correctly for at least one full major version cycle, and is only removed at the next major version boundary.
 - **Semantic stability:** a field's *meaning* is part of the contract, not just its type. Changing what `voice.tone` means, while keeping its type as `string`, is a breaking change under the same rule as removing the field.
 

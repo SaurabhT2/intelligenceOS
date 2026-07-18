@@ -23,13 +23,10 @@
  *     - `@supabase/supabase-js` (the one legitimate external runtime
  *       dependency — see that package's own AGENT_CONTEXT.md)
  *     - Node built-ins (`node:*`)
- *   `src/dev/**` is excluded from RULE-IOS-ISOLATION entirely: it's a
- *   standalone local-dev launcher (`src/dev/serve.ts`), not part of the
- *   published SDK surface (nothing in `src/index.ts` imports from it) and
- *   not part of the isolated core domain this rule protects — nothing
- *   inside `src/` imports *from* `src/dev/`, so a dependency it takes for
- *   its own convenience (e.g. `dotenv`, to load a local `.env`) can't leak
- *   into, or compromise the isolation of, the core domain/library code.
+ *   (`src/dev/**` previously had a carve-out here for a standalone local-dev
+ *   launcher, `src/dev/serve.ts` — removed when ADR-002's migration to
+ *   `apps/api/src/server.ts` as the one dev/host entrypoint was completed;
+ *   there is no longer a `src/dev/` directory to exclude.)
  *   RULE-SIT-ISOLATION  `packages/shared-intelligence-types/src/**` may
  *     only import relative paths and Node built-ins — this package is
  *     documented as having zero runtime dependencies at all.
@@ -205,7 +202,6 @@ if (isMain) {
     join(PACKAGES_ROOT, 'intelligence-os', 'src'),
     iosIsolationAllowed,
     PACKAGES_ROOT,
-    ['dev'],
   );
   const sitViolations = checkPackage(
     join(PACKAGES_ROOT, 'shared-intelligence-types', 'src'),

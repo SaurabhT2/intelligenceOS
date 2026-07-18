@@ -71,6 +71,7 @@ const HIGH_CONFIDENCE_PROFILE: IntelligenceProfile = {
   compositeConfidence: 0.9, archetypePrimary: 'founder', archetypeConfidence: 0.9,
   voiceSummary: null, goalSummary: null, constraintSummary: null,
   preferenceSummary: null, expertiseDomains: null, vocabularySnapshot: null,
+  knowledgeSummary: null, reasoningSummary: null, positioningSummary: null,
   createdAt: new Date(), updatedAt: new Date(),
 };
 

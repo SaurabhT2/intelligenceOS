@@ -138,6 +138,14 @@ describe('IntelligenceOSProvider — delegation', () => {
     expect(spy).toHaveBeenCalledWith('u1', 'learn-1', true, 'reviewer-1');
   });
 
+  it('recordCorrection() delegates with the same input', async () => {
+    const { provider, intelligenceOS } = makeProvider();
+    const spy = vi.spyOn(intelligenceOS, 'recordCorrection').mockResolvedValue(undefined);
+    const input = { userId: 'u1', correctionType: 'tone' as const, taxonomyCategory: 'communication_style', correctedValue: 'more formal' };
+    await provider.recordCorrection(input);
+    expect(spy).toHaveBeenCalledWith(input);
+  });
+
   it('getBrandSummary() delegates with the same params and returns the same result', async () => {
     const { provider, intelligenceOS } = makeProvider();
     const expected = { compositeConfidence: 0.5 } as any;

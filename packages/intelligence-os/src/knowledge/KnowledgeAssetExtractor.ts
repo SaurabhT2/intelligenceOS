@@ -79,6 +79,13 @@ const TYPE_KEYWORDS: Record<KnowledgeAssetType, RegExp> = {
   methodology: /\b(methodology|method|process|approach|system|workflow|protocol)\b/i,
   template:    /\b(template|boilerplate|starter|scaffold|format|structure)\b/i,
   reference:   /\b(reference|glossary|guide|handbook|manual|cheat ?sheet|definitions?)\b/i,
+  // EM-2.4 (Cognitive Platform Evolution Program): only reachable via this
+  // inference fallback when a caller omits assetType entirely — BrandOS's
+  // image-analysis call site always specifies 'visual_asset' explicitly
+  // (see the audit/program), so this entry mainly exists for
+  // Record<KnowledgeAssetType, RegExp> exhaustiveness and any future
+  // caller that doesn't.
+  visual_asset: /\b(logo|brand ?mark|palette|color ?scheme|typography|font ?family|visual ?identity|moodboard|mood ?board)\b/i,
 };
 
 function inferAssetType(title: string, content: string): KnowledgeAssetType {
@@ -98,7 +105,9 @@ function cleanText(raw: string): string {
     .replace(/\r\n/g, '\n')
     // Collapse runs of 3+ blank lines to 2
     .replace(/\n{3,}/g, '\n\n')
-    // Remove non-printable control characters (except newlines and tabs)
+    // Remove non-printable control characters (except newlines and tabs) —
+    // the control-character range below is intentional, not accidental.
+    // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
     .trim();
 }

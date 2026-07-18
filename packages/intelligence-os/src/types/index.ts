@@ -26,6 +26,8 @@ export type {
   UserId,
   ArtifactId,
   IntelligenceProfile,
+  SynthesizedItem,
+  SynthesizedCollection,
   Archetype,
   Learning,
   Hypothesis,

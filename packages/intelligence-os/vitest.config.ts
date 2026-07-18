@@ -10,11 +10,19 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: [
         'src/**/*.d.ts',
-        'src/db/queries/**',   // stub files, no coverage needed in Sprint 0
       ],
       thresholds: {
-        lines: 40,             // low threshold for Sprint 0 (mostly stubs)
-        branches: 30,
+        // Raised from the Sprint 0 defaults (lines: 40, branches: 30) after
+        // closing the test-coverage gap IMPLEMENTATION_STATUS.md/ROADMAP.md
+        // flagged (dedicated unit tests added for HypothesisEngine,
+        // LearningValidator.evaluate(), ProfileBuilder's pre-ADR-004 logic,
+        // and ProjectContextBuilder). Actual coverage as of this change is
+        // ~89% lines / ~84% branches; these thresholds sit a few points
+        // below that as headroom, not at the ceiling, so ordinary new code
+        // doesn't immediately fail CI while still meaningfully enforcing
+        // the gap stays closed.
+        lines: 85,
+        branches: 78,
       },
     },
   },

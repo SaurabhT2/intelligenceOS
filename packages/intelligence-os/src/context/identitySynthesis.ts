@@ -39,6 +39,7 @@
 
 import type { Learning, TaxonomyCategory } from '../types/entities';
 import type { IdentityContribution } from '@platform/cognition-contract';
+import { mergeByAscendingConfidence } from './confidenceMerge';
 
 // ── Which taxonomy categories carry identity-relevant content ──────────────
 // Deliberately narrower than VOICE_CATEGORIES (voiceMapping.ts) — identity is
@@ -72,36 +73,44 @@ function asStringArray(v: unknown): string[] | undefined {
  * Projects a Subject's identity-relevant Learnings into an
  * `IdentityContribution`, or `null` if none exist yet. Field-merge
  * precedence: ascending confidence order, so the highest-confidence
- * Learning touching a given field wins — identical merge discipline to
- * `voiceMapping.ts`'s `deriveVoiceProfile()`.
+ * Learning touching a given field wins — via the same shared
+ * `mergeByAscendingConfidence()` helper `voiceMapping.ts`'s
+ * `deriveVoiceProfile()` uses (ADR-005 finding D-2).
  */
 export function deriveIdentityContribution(learnings: readonly Learning[]): IdentityContribution | null {
-  const relevant = learnings
-    .filter(l => IDENTITY_CATEGORIES.includes(l.taxonomyCategory) && l.confidence >= MIN_IDENTITY_CONFIDENCE)
-    .slice()
-    .sort((a, b) => a.confidence - b.confidence);
+  const relevant = learnings.filter(
+    l => IDENTITY_CATEGORIES.includes(l.taxonomyCategory) && l.confidence >= MIN_IDENTITY_CONFIDENCE,
+  );
 
   if (relevant.length === 0) return null;
 
-  const result: {
-    brandName?: string;
-    narrativeArcs?: string[];
-    argumentationStyle?: string;
-    namedFrameworks?: string[];
-    preferredLength?: IdentityContribution['preferredLength'];
-  } = {};
-
-  for (const learning of relevant) {
+  const result = mergeByAscendingConfidence<
+    Learning,
+    {
+      brandName: string;
+      narrativeArcs: string[];
+      argumentationStyle: string;
+      namedFrameworks: string[];
+      preferredLength: IdentityContribution['preferredLength'];
+    }
+  >(relevant, (learning) => {
     const c = learning.content;
+    const fields: Partial<{
+      brandName: string;
+      narrativeArcs: string[];
+      argumentationStyle: string;
+      namedFrameworks: string[];
+      preferredLength: IdentityContribution['preferredLength'];
+    }> = {};
 
     const brandName = asString(c['brandName']);
-    if (brandName) result.brandName = brandName;
+    if (brandName) fields.brandName = brandName;
 
     const narrativeArcs = asStringArray(c['narrativeArcs']);
-    if (narrativeArcs) result.narrativeArcs = narrativeArcs;
+    if (narrativeArcs) fields.narrativeArcs = narrativeArcs;
 
     const argumentationStyle = asString(c['argumentationStyle']);
-    if (argumentationStyle) result.argumentationStyle = argumentationStyle;
+    if (argumentationStyle) fields.argumentationStyle = argumentationStyle;
 
     // 'intellectual_frameworks' Learnings may declare either a single
     // `framework`/`name` field or an already-plural `frameworks` array —
@@ -111,13 +120,15 @@ export function deriveIdentityContribution(learnings: readonly Learning[]): Iden
       asStringArray(c['frameworks']) ??
       (asString(c['framework']) ? [asString(c['framework'])!] : undefined) ??
       (asString(c['name']) ? [asString(c['name'])!] : undefined);
-    if (namedFrameworks) result.namedFrameworks = namedFrameworks;
+    if (namedFrameworks) fields.namedFrameworks = namedFrameworks;
 
     const preferredLength = c['preferredLength'];
     if (preferredLength === 'short' || preferredLength === 'medium' || preferredLength === 'long') {
-      result.preferredLength = preferredLength;
+      fields.preferredLength = preferredLength;
     }
-  }
+
+    return fields;
+  });
 
   // Nothing in the relevant, confidence-gated set actually populated a
   // field (e.g. every matching Learning's content used field names this

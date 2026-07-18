@@ -1,0 +1,42 @@
+name: CI
+
+# Runs the same checks `pnpm validate` and `pnpm test` already define locally
+# (typecheck, boundary check, lint, test suite) — see ROADMAP.md's near-term
+# item "Add a CI workflow running `pnpm validate` (typecheck + boundary
+# check) and `pnpm test` on every PR." No live infrastructure is required:
+# every test in this repository runs against a mocked Supabase client (see
+# docs/ARCHITECTURE.md §14).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate (typecheck + boundary check + lint)
+        run: pnpm validate
+
+      - name: Test
+        run: pnpm test

@@ -32,6 +32,7 @@ import type {
   CognitionConfidence,
   VoiceProfile,
 } from '@platform/cognition-contract';
+import { mergeByAscendingConfidence } from './confidenceMerge';
 
 // ── Which taxonomy categories carry voice-relevant content ────────────────
 
@@ -73,62 +74,74 @@ function asStringArray(v: unknown): string[] | undefined {
 
 /**
  * Projects the subset of workspace learnings tagged as voice-relevant into
- * a `VoiceProfile`. Learnings are applied in ascending confidence order so
- * that, when multiple learnings disagree on the same field, the
- * highest-confidence learning's value wins (last write wins in the loop).
- * This mirrors — at the field-merge level only, not the confidence-scoring
- * level — the "higher confidence overrides lower confidence" principle
- * already used throughout the Learning Pipeline (see LearningValidator's
- * escalation rule).
+ * a `VoiceProfile`. Learnings are merged via the shared
+ * `mergeByAscendingConfidence()` helper (ADR-005 finding D-2) — applied in
+ * ascending confidence order so that, when multiple learnings disagree on
+ * the same field, the highest-confidence learning's value wins (last
+ * write wins). This mirrors — at the field-merge level only, not the
+ * confidence-scoring level — the "higher confidence overrides lower
+ * confidence" principle already used throughout the Learning Pipeline
+ * (see LearningValidator's escalation rule).
  */
 export function deriveVoiceProfile(learnings: readonly Learning[]): VoiceProfile {
-  const relevant = learnings
-    .filter(l => VOICE_CATEGORIES.includes(l.taxonomyCategory))
-    .slice()
-    .sort((a, b) => a.confidence - b.confidence);
+  const relevant = learnings.filter(l => VOICE_CATEGORIES.includes(l.taxonomyCategory));
 
-  const result: {
-    tone?: string;
-    cadence?: VoiceProfile['cadence'];
-    audienceType?: string;
-    executiveLevel?: boolean;
-    domain?: string;
-    bannedPhrases?: readonly string[];
-    brandName?: string;
-    voiceDescriptor?: string;
-    audiencePositioning?: string;
-  } = {};
-
-  for (const learning of relevant) {
+  const result = mergeByAscendingConfidence<
+    Learning,
+    {
+      tone: string;
+      cadence: VoiceProfile['cadence'];
+      audienceType: string;
+      executiveLevel: boolean;
+      domain: string;
+      bannedPhrases: readonly string[];
+      brandName: string;
+      voiceDescriptor: string;
+      audiencePositioning: string;
+    }
+  >(relevant, (learning) => {
     const c = learning.content;
+    const fields: Partial<{
+      tone: string;
+      cadence: VoiceProfile['cadence'];
+      audienceType: string;
+      executiveLevel: boolean;
+      domain: string;
+      bannedPhrases: readonly string[];
+      brandName: string;
+      voiceDescriptor: string;
+      audiencePositioning: string;
+    }> = {};
 
     const tone = asString(c['tone']);
-    if (tone) result.tone = tone;
+    if (tone) fields.tone = tone;
 
     const cadence = c['cadence'];
-    if (isCadence(cadence)) result.cadence = cadence;
+    if (isCadence(cadence)) fields.cadence = cadence;
 
     const audienceType = asString(c['audienceType']);
-    if (audienceType) result.audienceType = audienceType;
+    if (audienceType) fields.audienceType = audienceType;
 
     const executiveLevel = asBool(c['executiveLevel']);
-    if (executiveLevel !== undefined) result.executiveLevel = executiveLevel;
+    if (executiveLevel !== undefined) fields.executiveLevel = executiveLevel;
 
     const domain = asString(c['domain']);
-    if (domain) result.domain = domain;
+    if (domain) fields.domain = domain;
 
     const bannedPhrases = asStringArray(c['bannedPhrases']);
-    if (bannedPhrases) result.bannedPhrases = bannedPhrases;
+    if (bannedPhrases) fields.bannedPhrases = bannedPhrases;
 
     const brandName = asString(c['brandName']);
-    if (brandName) result.brandName = brandName;
+    if (brandName) fields.brandName = brandName;
 
     const voiceDescriptor = asString(c['voiceDescriptor']);
-    if (voiceDescriptor) result.voiceDescriptor = voiceDescriptor;
+    if (voiceDescriptor) fields.voiceDescriptor = voiceDescriptor;
 
     const audiencePositioning = asString(c['audiencePositioning']);
-    if (audiencePositioning) result.audiencePositioning = audiencePositioning;
-  }
+    if (audiencePositioning) fields.audiencePositioning = audiencePositioning;
+
+    return fields;
+  });
 
   return {
     tone: result.tone ?? DEFAULT_VOICE.tone,

@@ -38,6 +38,9 @@ const SAMPLE_CONTEXT: CognitionContext = {
   },
   identity: null,
   visualIdentity: null,
+  knowledge: null,
+  reasoning: null,
+  positioning: null,
   provenance: { signalCount: 7, lastConsolidatedAt: '2026-05-30T00:00:00.000Z' },
 };
 
@@ -290,6 +293,84 @@ describe('createCognitionHttpServer', () => {
       expect(res.status).toBe(201);
       expect(await res.json()).toEqual({ assetId: 'asset-config-1' });
       expect(ingestWorkspaceConfiguration).toHaveBeenCalledWith(body);
+    });
+  });
+
+  describe('POST /v1/intelligence/feedback (Cognitive Platform Evolution Program, EM-3.1)', () => {
+    afterAll(() => stop());
+
+    it('returns 501 when the server was not configured with recordFeedbackEvent', async () => {
+      await start(makeMockProvider());
+      const res = await fetch(`${baseUrl}/v1/intelligence/feedback`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 'u-1', artifactId: 'a-1', artifactType: 'post', eventType: 'accepted' }),
+      });
+      expect(res.status).toBe(501);
+    });
+
+    it('returns 400 when userId, artifactId, or eventType is missing', async () => {
+      const recordFeedbackEvent = vi.fn().mockResolvedValue(undefined);
+      await start(makeMockProvider(), { ingestKnowledgeAsset: vi.fn(), recordFeedbackEvent });
+      const res = await fetch(`${baseUrl}/v1/intelligence/feedback`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ artifactId: 'a-1', eventType: 'accepted' }),
+      });
+      expect(res.status).toBe(400);
+      expect(recordFeedbackEvent).not.toHaveBeenCalled();
+    });
+
+    it('records the feedback event and returns 204', async () => {
+      const recordFeedbackEvent = vi.fn().mockResolvedValue(undefined);
+      await start(makeMockProvider(), { ingestKnowledgeAsset: vi.fn(), recordFeedbackEvent });
+      const body = { userId: 'u-1', artifactId: 'a-1', artifactType: 'post', eventType: 'edited' };
+      const res = await fetch(`${baseUrl}/v1/intelligence/feedback`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(204);
+      expect(recordFeedbackEvent).toHaveBeenCalledWith(body);
+    });
+  });
+
+  describe('POST /v1/intelligence/correction (Cognitive Platform Evolution Program, EM-3.3)', () => {
+    afterAll(() => stop());
+
+    it('returns 501 when the server was not configured with recordCorrection', async () => {
+      await start(makeMockProvider());
+      const res = await fetch(`${baseUrl}/v1/intelligence/correction`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 'u-1', correctionType: 'tone', correctedValue: 'more formal' }),
+      });
+      expect(res.status).toBe(501);
+    });
+
+    it('returns 400 when userId or correctionType is missing', async () => {
+      const recordCorrection = vi.fn().mockResolvedValue(undefined);
+      await start(makeMockProvider(), { ingestKnowledgeAsset: vi.fn(), recordCorrection });
+      const res = await fetch(`${baseUrl}/v1/intelligence/correction`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ correctedValue: 'more formal' }),
+      });
+      expect(res.status).toBe(400);
+      expect(recordCorrection).not.toHaveBeenCalled();
+    });
+
+    it('records the correction and returns 204', async () => {
+      const recordCorrection = vi.fn().mockResolvedValue(undefined);
+      await start(makeMockProvider(), { ingestKnowledgeAsset: vi.fn(), recordCorrection });
+      const body = { userId: 'u-1', correctionType: 'vocabulary' as const, correctedValue: 'synergy -> alignment' };
+      const res = await fetch(`${baseUrl}/v1/intelligence/correction`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(204);
+      expect(recordCorrection).toHaveBeenCalledWith(body);
     });
   });
 

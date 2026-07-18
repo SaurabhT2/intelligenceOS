@@ -63,6 +63,9 @@ const FOUNDER_PROFILE: IntelligenceProfile = {
   constraintSummary:   null,
   preferenceSummary:   null,
   expertiseDomains:    null,
+  knowledgeSummary:    null,
+  reasoningSummary:    null,
+  positioningSummary:  null,
   createdAt:           new Date(),
   updatedAt:           new Date(),
 };

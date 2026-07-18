@@ -71,6 +71,10 @@ interface ProfileRow {
   preference_summary: Record<string, unknown> | null;
   expertise_domains: Record<string, unknown> | null;
   vocabulary_snapshot: Record<string, unknown> | null;
+  /** ADR-004 (Cognitive Consolidation) — see IntelligenceProfile's matching fields. */
+  knowledge_summary: Record<string, unknown> | null;
+  reasoning_summary: Record<string, unknown> | null;
+  positioning_summary: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -167,6 +171,9 @@ function mapToProfile(row: ProfileRow): IntelligenceProfile {
     preferenceSummary: row.preference_summary,
     expertiseDomains: row.expertise_domains,
     vocabularySnapshot: row.vocabulary_snapshot,
+    knowledgeSummary: row.knowledge_summary as IntelligenceProfile['knowledgeSummary'],
+    reasoningSummary: row.reasoning_summary as IntelligenceProfile['reasoningSummary'],
+    positioningSummary: row.positioning_summary as IntelligenceProfile['positioningSummary'],
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -410,6 +417,9 @@ export class UserIntelligenceDomain {
       preference_summary:   profile.preferenceSummary,
       expertise_domains:    profile.expertiseDomains,
       vocabulary_snapshot:  profile.vocabularySnapshot,
+      knowledge_summary:    profile.knowledgeSummary,
+      reasoning_summary:    profile.reasoningSummary,
+      positioning_summary:  profile.positioningSummary,
     };
 
     const { error } = await this.db

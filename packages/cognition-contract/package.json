@@ -1,6 +1,6 @@
 {
   "name": "@platform/cognition-contract",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Zero-dependency cross-platform system contract between BrandOS (Execution Platform) and IntelligenceOS (Cognitive Platform). Types only — no runtime logic. This is the IntelligenceOS-repo copy; see README.md for the physical-duplication rule this package operates under.",
   "type": "module",
   "sideEffects": false,
@@ -27,6 +27,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "check:parity": "node scripts/check-contract-parity.mjs",
     "clean": "rimraf dist"
   },
   "dependencies": {},

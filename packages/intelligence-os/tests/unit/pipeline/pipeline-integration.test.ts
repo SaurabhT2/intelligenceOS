@@ -31,6 +31,7 @@ import { ProfileBuilder } from '../../../src/pipeline/ProfileBuilder';
 import { FeedbackProcessor } from '../../../src/pipeline/FeedbackProcessor';
 import { UserIntelligenceDomain } from '../../../src/domains/UserIntelligenceDomain';
 import { ArtifactIntelligenceDomain } from '../../../src/domains/ArtifactIntelligenceDomain';
+import { KnowledgeIntelligenceDomain } from '../../../src/domains/KnowledgeIntelligenceDomain';
 import { InProcessEventBus } from '../../../src/events/IntelligenceEventBus';
 import type { Observation } from '../../../src/pipeline/types';
 import type { Hypothesis, Learning } from '../../../src/types/entities';
@@ -483,7 +484,7 @@ describe('ProfileBuilder', () => {
   it('shouldRebuild returns true for a permanent stability-class learning', async () => {
     const db = createMockSupabase();
     const bus = new InProcessEventBus();
-    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus);
+    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus, new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient));
 
     const learning = makeLearning({ stabilityClass: 'permanent' });
     const decision = await builder.shouldRebuild('user-001', learning);
@@ -495,7 +496,7 @@ describe('ProfileBuilder', () => {
   it('shouldRebuild returns true when no profile exists', async () => {
     const db = createMockSupabase({ maybeSingle: { data: null, error: null } });
     const bus = new InProcessEventBus();
-    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus);
+    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus, new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient));
 
     const learning = makeLearning({ stabilityClass: 'long_term' });
     const decision = await builder.shouldRebuild('user-001', learning);
@@ -510,7 +511,7 @@ describe('ProfileBuilder', () => {
       list: { data: [{ id: 'l1' }, { id: 'l2' }], error: null }, // 2 < threshold of 3
     });
     const bus = new InProcessEventBus();
-    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus);
+    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus, new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient));
 
     const learning = makeLearning({ stabilityClass: 'long_term' });
     const decision = await builder.shouldRebuild('user-001', learning);
@@ -531,7 +532,7 @@ describe('ProfileBuilder', () => {
       emittedEvent = payload;
     });
 
-    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus);
+    const builder = new ProfileBuilder(new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient), bus, new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient));
     const profile = await builder.rebuild('user-001', ['user_intelligence']);
 
     expect(profile).toBeDefined();
@@ -560,6 +561,7 @@ describe('FeedbackProcessor', () => {
       bus,
       new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
       new ArtifactIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
+      new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
     );
     return { processor, bus, db };
   }
@@ -642,6 +644,7 @@ describe('FeedbackProcessor', () => {
         bus,
         new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
         new ArtifactIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
+        new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
       );
 
       const result = await processor.processObservation({
@@ -683,6 +686,7 @@ describe('FeedbackProcessor', () => {
       bus,
       new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
       new ArtifactIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
+      new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
     );
 
     // Must not throw
@@ -709,6 +713,7 @@ describe('FeedbackProcessor', () => {
       bus,
       new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
       new ArtifactIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
+      new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
     );
 
     const result = await processor.process(makeFeedbackPayload({ eventType: 'accepted' }));
@@ -734,6 +739,7 @@ describe('FeedbackProcessor', () => {
       bus,
       new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
       new ArtifactIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
+      new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
     );
 
     await processor.process(makeFeedbackPayload({ eventType: 'deployed' }));
@@ -751,6 +757,7 @@ describe('FeedbackProcessor', () => {
       bus,
       new UserIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
       new ArtifactIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
+      new KnowledgeIntelligenceDomain(db as unknown as import('@supabase/supabase-js').SupabaseClient),
     );
     processor.register();
 

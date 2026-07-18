@@ -276,4 +276,43 @@ export class ArtifactIntelligenceDomain {
 
     if (error) throw new DatabaseError('Failed to persist blueprint', error);
   }
+
+  /**
+   * Counts persisted `artifact_blueprints` rows for a user whose
+   * `audience_calibration` was resolved for a named recipient
+   * (`AudienceCalibration.isNamedRelationship === true`) — the "external
+   * artifacts with named recipients" half of `RelationshipIntelligenceDomain`'s
+   * Phase 2 activation trigger (Contracts §J.3: "User generates ≥3 external
+   * artifacts; named recipients appear consistently").
+   *
+   * `artifact_blueprints` is this domain's table (see this class's own
+   * header), so the count lives here rather than on
+   * `RelationshipIntelligenceDomain` itself, which owns `relationships`/
+   * `audience_profiles` — the same domain-ownership discipline every other
+   * cross-domain read in this codebase already follows (e.g.
+   * `ProjectContextBuilder` reading learnings via `UserIntelligenceDomain`
+   * rather than querying `learnings` directly).
+   *
+   * This is the counting half of the trigger-check `IMPLEMENTATION_STATUS.md`
+   * flagged as missing — it does not itself flip any domain's behavior.
+   * See `RelationshipIntelligenceDomain.checkActivationTrigger()`, which
+   * calls this and combines it with the onboarding-signal half of the same
+   * trigger, for the full activation *decision*; that decision remains
+   * advisory only (the domain's methods keep throwing
+   * `DomainNotActivatedError` regardless) — building out real named-
+   * relationship storage and read paths is Phase 2 feature work, a larger
+   * and separate decision than "can we now tell whether the trigger has
+   * fired."
+   */
+  async countArtifactsWithNamedRecipients(userId: string): Promise<number> {
+    const { count, error } = await this.db
+      .schema('intelligence')
+      .from('artifact_blueprints')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .contains('audience_calibration', { isNamedRelationship: true });
+
+    if (error) throw new DatabaseError(`Failed to count named-recipient artifacts for user ${userId}`, error);
+    return count ?? 0;
+  }
 }

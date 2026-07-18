@@ -129,7 +129,7 @@ const NAMED_COLOR_KEYWORDS = [
 ];
 
 /** Font-related vocabulary */
-const FONT_FAMILY_RE = /\b(?:font-family|typeface|font)\s*[:=]?\s*["']?([A-Za-z][A-Za-z0-9 \-]+?)["']?(?:[,;)]|\s+\d|\s+(?:bold|light|regular|italic))/gi;
+const FONT_FAMILY_RE = /\b(?:font-family|typeface|font)\s*[:=]?\s*["']?([A-Za-z][A-Za-z0-9 -]+?)["']?(?:[,;)]|\s+\d|\s+(?:bold|light|regular|italic))/gi;
 
 const KNOWN_FONTS = [
   'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Nunito', 'Poppins',

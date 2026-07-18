@@ -86,20 +86,17 @@ pnpm --filter @intelligence-os/core run check:boundaries   # platform boundary r
 
 No `.env`, no live Supabase instance, and no network access are required to typecheck or test — every Supabase call is mocked in the test suite.
 
-## Running the dev HTTP server locally
+## Running the HTTP server locally
 
-`pnpm serve` (`src/dev/serve.ts`) is a separate, dev-only entrypoint that
-exposes `IntelligenceOS.asCognitionProvider()` over the HTTP routes
-BrandOS's `HttpCognitionProvider` calls — see `src/api/http/server.ts`.
-Unlike the library itself, this one script *does* need real
-infrastructure to run, because IntelligenceOS's job is durable brand-
-memory persistence — there's no version of "start the server" that
-doesn't need a real place to persist to:
+This package publishes `IntelligenceOS` and `createCognitionHttpServer` as a
+reusable SDK; it does not itself run a server. That's `apps/*`'s job (see
+`docs/adr/ADR-002-apps-runtime-layer.md`) — for a persistent-process host,
+use `apps/api`:
 
 ```bash
-cd packages/intelligence-os
+cd apps/api
 cp .env.example .env   # then fill in your own values
-pnpm serve
+pnpm --filter @intelligence-os/api dev
 ```
 
 `.env.example` documents all three required variables
@@ -112,3 +109,10 @@ same as before — `.env` is a convenience, not a requirement. See
 `IntelligenceOS-Platform/`) for the full two-repo BrandOS ↔ IntelligenceOS
 local workflow this plugs into, including how `COGNITION_API_KEY` pairs
 with BrandOS's `INTELLIGENCE_OS_API_KEY`.
+
+(This package previously shipped its own dev-only `src/dev/serve.ts` /
+`pnpm serve` entrypoint, before `apps/api` existed as its intended
+successor — see ADR-002. Both launchers had converged on identical
+behavior, so the duplication was removed as part of completing that
+migration; `apps/api/src/server.ts` is the one remaining copy.)
+

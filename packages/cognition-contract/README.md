@@ -8,19 +8,35 @@ Governed by, and must stay consistent with:
 - `docs/ARCHITECTURE.md`
 - `docs/PLATFORM_CONTRACT.md` §3–§5
 - `docs/adr/ADR-003-subject-centric-intelligence.md`
+- `docs/adr/ADR-004-cognitive-consolidation.md` — added `knowledge`/`reasoning`/`positioning` to `CognitionContext` (contract version `1.0.0` → `1.1.0`, additive)
 
 ## Physical duplication (tracked, temporary)
 
 This package is currently duplicated byte-for-byte in both the `brandos`
 and `intelligence-os` repositories, because the two are separate repos with
 no shared package registry between them today. **Any change to `src/` must
-be applied identically to both copies in the same change set.**
+be applied identically to both copies in the same change set.** ADR-004's
+`CognitionContext` changes were made in this repository's copy only — the
+`brandos`-side copy is outside this repository's reach and needs the
+identical change applied separately, per this section's own rule.
 
 Follow-up (not yet scheduled): publish this package to a real registry
 (private npm registry or a git-dependency workspace protocol both repos can
 resolve) and delete one of the two copies in favor of a real dependency.
-Until then, a CI check comparing the two copies' file hashes is recommended
-so drift is caught immediately rather than discovered at integration time.
+That requires provisioning a private package registry, which is an
+infrastructure/ops decision outside a code change to this package.
+
+**Until then (Cognitive Platform Evolution Program, EM-1.1):**
+`scripts/check-contract-parity.mjs` is a real, runnable symbol-level diff
+against the sibling repository's copy (mirrors `brandos`'s copy of the same
+script), wired into CI via `.github/workflows/contract-parity.yml` (see
+that file's comments for the placeholder repo slug / token it still needs).
+It does not require byte-for-byte identity — see
+`contract-parity.allowlist.json` for the one currently-known, deliberate
+exception (BrandOS's Option B) — but it fails the build on anything else,
+including the exact kind of drift (this file's ADR-004 fields silently
+missing from BrandOS's copy) that the audit preceding this program had to
+catch by hand.
 
 ## Subject scope (read this before assuming a contract change is needed)
 
@@ -62,32 +78,21 @@ unilaterally. Gap 1 still needs a decision; gap 2's direction is decided
    read (still no raw content, e.g. classification + confidence + a
    pre-rendered display string), or change the product surface.
 
-2. **Explicit brand-voice configuration ingestion.** Before this
-   migration, BrandOS forwarded a workspace's user-edited persona record
-   (brand name, tone override, banned phrases, etc. — from
-   `@brandos/auth`'s persona storage) into brand-cognition resolution on
-   every request, and it was merged live with learned signals.
-   `CognitionRequest` (this package) intentionally carries only
-   `workspaceId` and `taskType` — no persona payload — per
-   `PLATFORM_CONTRACT.md` §4's exact signature, since
-   BrandOS is not supposed to hand IntelligenceOS raw configuration on the
-   synchronous read path, and that stays true regardless of how this gap
-   closes. **Decided:** explicit, user-set configuration is **Knowledge**,
-   not an outcome `observe()` reports and not a payload merged externally —
-   see `ADR-003` §2.4. It reaches IntelligenceOS through a narrow ingestion
-   path modeled on the existing Knowledge Ingest route, stored with
-   provenance the way any other `KnowledgeAsset` is, and read alongside a
-   workspace's learned intelligence when `identity`/`voice` are synthesized.
-   **Implemented in IntelligenceOS** — `IntelligenceOS.ingestWorkspaceConfiguration()`
-   and `context/ContextBuilder.ts`'s explicit-configuration precedence
-   over Learning-derived voice. Not yet exposed as a `CognitionProvider`
-   HTTP route or a BrandOS-side admin surface — that remains an explicit,
-   separate decision (which transport/auth an admin-facing write belongs
-   behind), tracked in `IMPLEMENTATION_STATUS.md`.
+2. ~~**Explicit brand-voice configuration ingestion.**~~ **RESOLVED**
+   (Cognitive Platform Evolution Program, Milestone 1 / EM-1.2). Decided in
+   `ADR-003` §2.4: explicit, user-set configuration is **Knowledge**, not an
+   outcome `observe()` reports. `IntelligenceOS.ingestWorkspaceConfiguration()`
+   and `context/ContextBuilder.ts`'s explicit-configuration precedence over
+   Learning-derived voice were already implemented here; `POST
+   /v1/workspace-configuration` was already wired in both HTTP deployment
+   targets (`apps/api/src/server.ts`, `apps/api/api/cognition.ts`) — the
+   previous version of this note said otherwise, which was stale relative
+   to the code, not an accurate account of a remaining gap. What was
+   actually missing was a BrandOS-side caller, which now exists
+   (`@brandos/cognition-client`'s `WorkspaceConfigurationClient`, called
+   from `@brandos/auth`'s persona write path). End to end: a persona edit
+   in BrandOS now reaches this endpoint in the same request cycle.
 
-Gap 1 still needs an explicit decision. Gap 2's decision is recorded in
-`ADR-003` and implemented in IntelligenceOS; the BrandOS-side migration in
-this change set preserves the mechanical contract exactly as specified in
-the meantime and leaves both gaps visible rather than papering over them
-with a shadow parameter or an
-undocumented sixth method.
+Gap 1 still needs an explicit decision — see the Cognitive Platform
+Evolution Program, Milestone 4, EM-4.5, which surfaces it again but does
+not resolve it unilaterally. Gap 2 is closed.

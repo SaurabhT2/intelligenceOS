@@ -40,7 +40,6 @@
 import type { IntelligenceEventBus } from '../events/IntelligenceEventBus';
 import type { KnowledgeAssetInput } from '../types/domains';
 import type { KnowledgeAsset, KnowledgeAssetOwnerType, KnowledgeAssetType } from '../types/entities';
-import type { KnowledgeAssetPayload } from '../types/events';
 import type { KnowledgeIntelligenceDomain } from '../domains/KnowledgeIntelligenceDomain';
 import type {
   KnowledgeProcessorResult,
@@ -88,6 +87,12 @@ export class KnowledgeProcessor {
    */
   register(): void {
     this.bus.on('intelligence.knowledge_asset.uploaded', async (payload) => {
+      // Completion Mission (RCA finding — double-processing / empty-content
+      // overwrite): this used to hardcode `''` here, on the assumption that
+      // extraction had already happened via a separate direct call in
+      // `IntelligenceOS.ingestKnowledgeAsset()`. That direct call has been
+      // removed — this handler is now the single place extraction happens,
+      // so it must use the real content the event now carries.
       await this.process(
         {
           ownerType:     payload.ownerType as KnowledgeAssetOwnerType,
@@ -98,7 +103,7 @@ export class KnowledgeProcessor {
           title:         payload.title,
           sourceFileRef: payload.sourceFileRef ?? null,
         },
-        '',
+        payload.rawContent ?? '',
         payload.assetId,
       );
     });
@@ -206,6 +211,16 @@ export class KnowledgeProcessor {
         userId:        job.userId ?? 'unknown',
         entityId:      assetId,
         entityType:    'knowledge_asset',
+        // ADR-004 (Cognitive Consolidation) implementation note: added so
+        // FeedbackProcessor's new subscriber (processKnowledgeExtraction())
+        // can resolve the correct SubjectRef for a workspace-owned asset —
+        // job.ownerType/job.workspaceId were already computed here for
+        // persistAsset() above, just not previously forwarded on this
+        // event. See CHANGELOG / IMPLEMENTATION_STATUS.md for why this was
+        // a gap in the approved blueprint's own File Impact Matrix, not an
+        // architectural change to KnowledgeProcessor's responsibilities.
+        ownerType:     job.ownerType,
+        workspaceId:   job.workspaceId ?? undefined,
         lifecycleState,
         termCount:     vocabularyResult.termCount,
         frameworkCount: frameworkResult.frameworkCount,
@@ -240,7 +255,7 @@ export class KnowledgeProcessor {
     patterns:   import('./types').PatternExtractionResult,
     visual:     VisualFeatureExtractionResult | null,
     confidence: number,
-    _lifecycleState: KnowledgeAssetLifecycleState,
+    lifecycleState: KnowledgeAssetLifecycleState,
   ): Promise<KnowledgeAsset> {
     return this.knowledgeDomain.persistExtracted({
       id:                       job.assetId,
@@ -257,7 +272,14 @@ export class KnowledgeProcessor {
       extractedVisualFeatures:  visual     as unknown as Record<string, unknown> | null,
       confidence,
       version:                  1,
-      isCurrent:                true,
+      // Completion Mission (RCA finding — compounding factor on the
+      // double-processing defect): this was previously hardcoded to
+      // `true` regardless of validation outcome, so a failed/low-
+      // confidence extraction (e.g. empty content) was just as
+      // "authoritative" to `getCurrentAssetsForSubject()` and corroboration
+      // lookups as a genuine, validated extraction. A non-ACTIVE
+      // lifecycle state (validation failed) should not be current.
+      isCurrent:                lifecycleState === 'ACTIVE',
     });
   }
 }

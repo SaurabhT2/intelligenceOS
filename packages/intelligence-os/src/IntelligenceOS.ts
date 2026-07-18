@@ -12,11 +12,19 @@
  * interface rather than this concrete class can use IntelligenceOSProvider
  * (./compat/IntelligenceOSProvider.ts) instead — same behaviour, interface-typed.
  *
- * Public API surface (4 methods, fixed for all sprints):
+ * Public API surface (6 methods, fixed for all sprints, plus considered
+ * post-Sprint-0 additions ingestWorkspaceConfiguration() and
+ * recordCorrection() — see their own docblocks for why each was a separate,
+ * considered decision per ARCHITECTURE.md §11 Rule 7):
  *   buildBlueprint()        — Sprint 1 (Blueprint Assembly)
  *   recordFeedbackEvent()   — Sprint 0 (write path), Sprint 2 (pipeline trigger)
  *   ingestKnowledgeAsset()  — Sprint 3 (Onboarding Intelligence)
  *   upsertProject()         — Sprint 0 (write path)
+ *   ingestWorkspaceConfiguration() — ADR-003 (added to IIntelligenceProvider
+ *                                    during the Completion Mission session)
+ *   recordCorrection()      — emitter half of intelligence.user.correction
+ *                              (added during the IntelligenceOS Completion
+ *                              Plan execution session)
  *
  * Sprint 0 behaviour:
  *   buildBlueprint()        → throws PhaseNotImplementedError
@@ -29,7 +37,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ArtifactRequest, ArtifactBlueprint, FeedbackEvent } from '@intelligence-os/shared-types';
 import type { IntelligenceSummary } from '@intelligence-os/shared-types';
 import type { IntelligenceEventBus } from './events/IntelligenceEventBus';
-import type { KnowledgeAssetInput, ProjectInput, WorkspaceConfigurationInput } from './types/domains';
+import type { KnowledgeAssetInput, ProjectInput, WorkspaceConfigurationInput, UserCorrectionInput } from './types/domains';
 import type { IIntelligenceProvider } from './IIntelligenceProvider';
 import type { CognitionProvider } from '@platform/cognition-contract';
 
@@ -122,7 +130,7 @@ export class IntelligenceOS implements IIntelligenceProvider {
     // Signal → Profile flow. Persistence routes through
     // UserIntelligenceDomain and ArtifactIntelligenceDomain (Gap Analysis
     // G-2, resolved this session) rather than a private client.
-    this.feedbackProcessor = new FeedbackProcessor(this.bus, this.domains.user, this.domains.artifact);
+    this.feedbackProcessor = new FeedbackProcessor(this.bus, this.domains.user, this.domains.artifact, this.domains.knowledge);
     this.feedbackProcessor.register();
 
     // Sprint 3: wire Knowledge Intelligence. KnowledgeProcessor subscribes to
@@ -181,19 +189,45 @@ export class IntelligenceOS implements IIntelligenceProvider {
    *                    API — if omitted, the asset is persisted with low confidence
    *                    and the event-driven extraction path is used when Sprint 4
    *                    adds content retrieval from storage.
+   * @param existingAssetId  Cognitive Platform Evolution Program, EM-2.2/
+   *                    EM-2.6. When supplied, re-runs extraction and
+   *                    upserts the SAME asset id instead of minting a new
+   *                    one — `persistExtracted()` already upserts by id
+   *                    (`onConflict: 'id'`), so this was previously unused
+   *                    plumbing: every call generated a fresh UUID
+   *                    regardless of caller intent, which is what forced
+   *                    BrandOS's asset-analyze route to route re-analysis
+   *                    through `observe()` instead of this method (there
+   *                    was no way to say "update, don't duplicate"). Omit
+   *                    for a genuinely new asset.
    */
   async ingestKnowledgeAsset(
     asset: KnowledgeAssetInput,
     rawContent = '',
+    existingAssetId?: string,
   ): Promise<string> {
-    const assetId = crypto.randomUUID();
+    const assetId = existingAssetId ?? crypto.randomUUID();
 
-    // Run the extraction pipeline synchronously (Phase 1).
-    // Sprint 4 will move this behind the event bus (async queue).
-    await this.knowledgeProcessor.process(asset, rawContent, assetId);
-
-    // Emit the knowledge_asset.uploaded event so any additional bus subscribers
-    // (e.g. observability consumers) receive notification.
+    // Completion Mission (RCA finding — double-processing / empty-content
+    // overwrite): this method used to (a) call
+    // `knowledgeProcessor.process()` directly with the real `rawContent`,
+    // AND (b) emit `intelligence.knowledge_asset.uploaded` immediately
+    // afterward "for observability consumers" — except `KnowledgeProcessor`
+    // itself is subscribed to that exact event (see
+    // `knowledge/KnowledgeProcessor.ts::register()`), so every ingested
+    // asset was silently processed a second time, with the event handler's
+    // hardcoded empty-string content. Because `persistExtracted()` upserts
+    // by `id`, that second, content-free pass overwrote the first, correct
+    // extraction — the row survived (still `is_current: true`) but with
+    // empty vocabulary/frameworks/patterns and `confidence` collapsed to
+    // `EMPTY_CONTENT_CONFIDENCE` (0.20).
+    //
+    // Fix: process the asset exactly once. The event remains the single
+    // trigger for extraction (so `KnowledgeProcessor`'s existing
+    // event-driven test coverage and any other bus subscriber keep
+    // working unmodified) — it now simply carries the real `rawContent`
+    // instead of being emitted as a content-free "notification" alongside
+    // a separate, duplicate direct call.
     await this.bus.emit('intelligence.knowledge_asset.uploaded', {
       userId:        asset.userId ?? '',
       assetId,
@@ -203,6 +237,7 @@ export class IntelligenceOS implements IIntelligenceProvider {
       assetType:     asset.assetType,
       title:         asset.title,
       sourceFileRef: asset.sourceFileRef ?? '',
+      rawContent,
       occurredAt:    new Date().toISOString(),
     });
 
@@ -262,6 +297,36 @@ export class IntelligenceOS implements IIntelligenceProvider {
     });
 
     return id;
+  }
+
+  /**
+   * The emitter half of `intelligence.user.correction` (see
+   * `UserCorrectionInput` in `types/domains.ts` for the full rationale).
+   * Corrections are the highest-authority signal in the system (Contracts
+   * B.2) — `FeedbackProcessor.processCorrection()` routes this straight to
+   * `LearningValidator.maybeConfirm()`, bypassing the normal
+   * Signal → Observation → Hypothesis corroboration gate entirely.
+   *
+   * No dedicated persistence table exists for corrections (unlike
+   * `recordFeedbackEvent()`, which writes an audit-trail row before
+   * emitting) — a correction's only durable effect is the Learning it
+   * confirms, exactly like `ingestWorkspaceConfiguration()`'s treatment of
+   * declarative input with no separate event-log table of its own. This
+   * method therefore purely emits; `occurredAt` is stamped here rather
+   * than accepted as input, matching `recordFeedbackEvent()`'s convention.
+   *
+   * Returns immediately — like every other write method on this class,
+   * processing is fully asynchronous via the event bus.
+   */
+  async recordCorrection(input: UserCorrectionInput): Promise<void> {
+    await this.bus.emit('intelligence.user.correction', {
+      userId: input.userId,
+      correctionType: input.correctionType,
+      taxonomyCategory: input.taxonomyCategory ?? null,
+      correctedValue: input.correctedValue,
+      context: input.context ?? null,
+      occurredAt: new Date().toISOString(),
+    });
   }
 
   // ── E1-1: Human Learning Review API ────────────────────────────────────────

@@ -256,6 +256,18 @@ export class SignalExtractor {
       normalizedScore: normalizeObservedScore(input.score),
       observedAt,
       sourceQuality: quality,
+      // EM-3.4 (Cognitive Platform Evolution Program) — stored for future
+      // correlation (e.g. "does provider X's output get accepted more
+      // often"), not used to infer a taxonomy category here — providerId/
+      // modelId/routingHint/tokenUsage are operational metadata about HOW
+      // a generation was produced, not a signal about voice, content, or
+      // brand fit, so they stay out of taxonomyCategory inference per this
+      // file's existing conservative-inference discipline (see the
+      // comment above isMeaningfulScore).
+      providerId: input.providerId ?? null,
+      modelId: input.modelId ?? null,
+      routingHint: input.routingHint ?? null,
+      tokenUsage: input.tokenUsage ?? null,
     };
 
     signals.push({

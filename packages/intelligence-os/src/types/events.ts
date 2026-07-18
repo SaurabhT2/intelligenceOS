@@ -83,6 +83,23 @@ export interface KnowledgeAssetPayload {
   title: string;
   /** Storage key or path to the raw file. */
   sourceFileRef: string;
+  /**
+   * The extracted text content for this asset. Optional and empty by
+   * default for lightweight/observability-only emitters of this event —
+   * but `KnowledgeProcessor`'s own extraction-pipeline handler (see
+   * `knowledge/KnowledgeProcessor.ts::register()`) is this event's single
+   * processing consumer, and requires the real content to extract
+   * anything meaningful from. `IntelligenceOS.ingestKnowledgeAsset()` is
+   * the sole in-repo emitter and always populates this field with the
+   * caller-supplied `rawContent` (Completion Mission — closes the
+   * double-processing / empty-content-overwrite defect where this event
+   * used to be emitted *in addition to* a separate direct
+   * `KnowledgeProcessor.process()` call with the real content, causing the
+   * same asset id to be processed twice — once correctly, once with an
+   * empty string that silently overwrote the first extraction via
+   * `persistExtracted()`'s upsert-by-id).
+   */
+  rawContent?: string;
   occurredAt: string;
 }
 

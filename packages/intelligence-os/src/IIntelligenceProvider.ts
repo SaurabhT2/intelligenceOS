@@ -49,7 +49,7 @@ import type {
   FeedbackEvent,
   IntelligenceSummary,
 } from '@intelligence-os/shared-types';
-import type { ProjectInput, KnowledgeAssetInput, WorkspaceConfigurationInput } from './types/domains';
+import type { ProjectInput, KnowledgeAssetInput, WorkspaceConfigurationInput, UserCorrectionInput } from './types/domains';
 
 export interface IIntelligenceProvider {
   /**
@@ -119,4 +119,19 @@ export interface IIntelligenceProvider {
    * when no profile exists rather than throwing.
    */
   getBrandSummary(params: { userId: string; workspaceId?: string }): Promise<IntelligenceSummary>;
+
+  /**
+   * The emitter half of `intelligence.user.correction` — the highest-
+   * authority signal in the system (Contracts B.2), bypassing the normal
+   * Signal → Observation → Hypothesis corroboration gate entirely and
+   * applying directly to an existing VALIDATED Learning via
+   * `LearningValidator.maybeConfirm()`. The handler side has been real and
+   * tested since before this addition (`tests/unit/pipeline/UserCorrection.test.ts`);
+   * this method is the considered, separately-reviewed public-contract
+   * addition `ARCHITECTURE.md` §11 Rule 7 asks for — the same treatment
+   * `ingestWorkspaceConfiguration()` received above. Returns immediately;
+   * processing is fully asynchronous via the event bus. See
+   * `UserCorrectionInput` (`types/domains.ts`) for the full field rationale.
+   */
+  recordCorrection(input: UserCorrectionInput): Promise<void>;
 }

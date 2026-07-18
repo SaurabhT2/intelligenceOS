@@ -39,7 +39,6 @@ import type {
   PatternExtractionResult,
   PatternType,
 } from './types';
-import type { NormalizedContent } from './types';
 
 // ── Structural pattern signals ────────────────────────────────────────────────
 
@@ -238,7 +237,7 @@ function createPattern(
   };
 }
 
-function deriveStructuralName(title: string, assetType: string): string {
+function deriveStructuralName(title: string, _assetType: string): string {
   const clean = title.replace(/\b(the|a|an|your)\b/gi, '').trim();
   return `${clean} Structure Pattern`.replace(/\s+/g, ' ');
 }

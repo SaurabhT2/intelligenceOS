@@ -72,7 +72,7 @@ export class CognitionProviderImpl implements CognitionProvider {
     this.health = deps.health;
     this.feedbackProcessor = deps.feedbackProcessor;
     this.logger = deps.logger ?? console;
-    this.contextBuilder = new ContextBuilder(this.workspace);
+    this.contextBuilder = new ContextBuilder(this.workspace, this.user);
   }
 
   /**
@@ -126,6 +126,28 @@ export class CognitionProviderImpl implements CognitionProvider {
    * block or fail the generation path" requirement.
    */
   async observe(input: ObservationInput): Promise<void> {
+    // EM-3.5 (Cognitive Platform Evolution Program, Milestone 3): failed
+    // generations previously produced no observe() call at all and were
+    // completely invisible to IntelligenceOS — this is the first place
+    // that changes. A failure observation naturally produces zero Signals
+    // downstream (SignalExtractor's isMeaningfulScore() guard already
+    // requires score > 0, and failure observations report score: 0 — see
+    // ObservationInput's docblock), which is correct: there is no real
+    // output to judge. But the failure ITSELF is now a real, observable
+    // event via this distinct log line, where before it left no trace on
+    // this side of the boundary at all.
+    if (input.outcome === 'failure') {
+      this.logger.warn('[CognitionProviderImpl] generation FAILURE reported:', {
+        workspaceId: input.workspaceId,
+        requestId: input.requestId,
+        artifactType: input.artifactType,
+        providerId: input.providerId,
+        modelId: input.modelId,
+        failureReason: input.failureReason,
+        observedAt: input.observedAt ?? new Date().toISOString(),
+      });
+    }
+
     this.logger.info('[CognitionProviderImpl] observation received:', {
       workspaceId: input.workspaceId,
       requestId: input.requestId,
@@ -133,6 +155,9 @@ export class CognitionProviderImpl implements CognitionProvider {
       topic: input.topic,
       artifactType: input.artifactType,
       wasRepaired: input.wasRepaired,
+      outcome: input.outcome ?? 'success',
+      providerId: input.providerId,
+      modelId: input.modelId,
       observedAt: input.observedAt ?? new Date().toISOString(),
     });
 

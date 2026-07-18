@@ -10,7 +10,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { ContextBuilder } from '../../../src/context/ContextBuilder';
 import { COGNITION_CONTRACT_VERSION } from '@platform/cognition-contract';
 import type { WorkspaceIntelligenceDomain } from '../../../src/domains/WorkspaceIntelligenceDomain';
-import type { Learning, WorkspaceContext } from '../../../src/types/entities';
+import type { UserIntelligenceDomain } from '../../../src/domains/UserIntelligenceDomain';
+import type { Learning, WorkspaceContext, IntelligenceProfile } from '../../../src/types/entities';
 
 function makeLearning(overrides: Partial<Learning> = {}): Learning {
   return {
@@ -56,10 +57,17 @@ function makeWorkspaceDomain(
   } as unknown as WorkspaceIntelligenceDomain;
 }
 
+/** ADR-004 (Cognitive Consolidation) — the new constructor dependency ContextBuilder gained. Defaults to "no profile yet" (null), matching a Subject with nothing learned or uploaded. */
+function makeUserDomain(profile: IntelligenceProfile | null = null): UserIntelligenceDomain {
+  return {
+    getCurrentProfileForSubject: vi.fn().mockResolvedValue(profile),
+  } as unknown as UserIntelligenceDomain;
+}
+
 describe('ContextBuilder.build()', () => {
   it('returns a fully-shaped CognitionContext with the current contract version', async () => {
     const workspace = makeWorkspaceDomain([makeLearning()]);
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -73,7 +81,7 @@ describe('ContextBuilder.build()', () => {
 
   it('honestly returns identity: null when no identity-relevant learnings exist yet, and visualIdentity: null unconditionally', async () => {
     const workspace = makeWorkspaceDomain([makeLearning()]); // only a writing_style (voice) learning
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -96,7 +104,7 @@ describe('ContextBuilder.build()', () => {
         content: { framework: 'Jobs to be Done' },
       }),
     ]);
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -115,7 +123,7 @@ describe('ContextBuilder.build()', () => {
         content: { brandName: 'Acme' },
       }),
     ]);
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -127,7 +135,7 @@ describe('ContextBuilder.build()', () => {
       [makeLearning({ content: { tone: 'authoritative', domain: 'fintech' } })],
       { voiceConfiguration: { tone: 'playful', bannedPhrases: ['synergy'] } },
     );
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -141,7 +149,7 @@ describe('ContextBuilder.build()', () => {
       [makeLearning()], // only a writing_style (voice) learning — no identity-relevant learnings
       { identityConfiguration: { brandName: 'ConfiguredCo', preferredLength: 'short' } },
     );
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -161,7 +169,7 @@ describe('ContextBuilder.build()', () => {
       ],
       { identityConfiguration: { brandName: 'ConfiguredCo' } },
     );
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -171,7 +179,7 @@ describe('ContextBuilder.build()', () => {
 
   it('D-3 closure: identity stays honestly null when neither learnings nor configuration contribute anything', async () => {
     const workspace = makeWorkspaceDomain([makeLearning()], { identityConfiguration: {} });
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-1');
 
@@ -180,7 +188,7 @@ describe('ContextBuilder.build()', () => {
 
   it('returns a low-confidence-but-complete context for a workspace with zero learnings, rather than throwing', async () => {
     const workspace = makeWorkspaceDomain([]);
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     const context = await builder.build('ws-empty');
 
@@ -199,7 +207,7 @@ describe('ContextBuilder.build()', () => {
 
   it('calls WorkspaceIntelligenceDomain.getWorkspaceLearnings and getContext with the given workspaceId, and nothing else', async () => {
     const workspace = makeWorkspaceDomain([]);
-    const builder = new ContextBuilder(workspace);
+    const builder = new ContextBuilder(workspace, makeUserDomain());
 
     await builder.build('ws-42', 'blog_post');
 

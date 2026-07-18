@@ -24,7 +24,9 @@ import { FeedbackProcessor } from '../../../src/pipeline/FeedbackProcessor';
 import { LearningValidator } from '../../../src/pipeline/LearningValidator';
 import { UserIntelligenceDomain } from '../../../src/domains/UserIntelligenceDomain';
 import { ArtifactIntelligenceDomain } from '../../../src/domains/ArtifactIntelligenceDomain';
+import { KnowledgeIntelligenceDomain } from '../../../src/domains/KnowledgeIntelligenceDomain';
 import { InProcessEventBus } from '../../../src/events/IntelligenceEventBus';
+import { IntelligenceOS } from '../../../src/IntelligenceOS';
 import type { UserCorrectionPayload } from '../../../src/types/events';
 
 // ── Minimal Supabase mock (mirrors pipeline-integration.test.ts's pattern,
@@ -149,6 +151,7 @@ describe('FeedbackProcessor.processCorrection()', () => {
       bus,
       new UserIntelligenceDomain(supabase),
       new ArtifactIntelligenceDomain(supabase),
+      new KnowledgeIntelligenceDomain(supabase),
     );
   }
 
@@ -215,6 +218,7 @@ describe('FeedbackProcessor.processCorrection()', () => {
       bus,
       new UserIntelligenceDomain(supabase),
       new ArtifactIntelligenceDomain(supabase),
+      new KnowledgeIntelligenceDomain(supabase),
     );
     processor.register();
 
@@ -226,6 +230,96 @@ describe('FeedbackProcessor.processCorrection()', () => {
       taxonomyCategory: 'communication_style',
       correctedValue: 'more formal',
       occurredAt: new Date().toISOString(),
+    });
+
+    // InProcessEventBus handlers are fire-and-forget; give the microtask
+    // queue a tick to let the async handler run.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(spy).toHaveBeenCalledOnce();
+  });
+});
+
+// ── IntelligenceOS.recordCorrection() (emitter side, added this session) ───
+
+describe('IntelligenceOS.recordCorrection()', () => {
+  function createMockSupabase() {
+    const chain = {
+      select:      vi.fn().mockReturnThis(),
+      eq:          vi.fn().mockReturnThis(),
+      order:       vi.fn().mockReturnThis(),
+      limit:       vi.fn().mockReturnThis(),
+      update:      vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: makeLearningRow(), error: null }),
+      then: vi.fn().mockImplementation((resolve: (v: unknown) => unknown) =>
+        Promise.resolve(resolve({ data: null, error: null })),
+      ),
+    };
+    const from = vi.fn().mockReturnValue(chain);
+    const schema = vi.fn().mockReturnValue({ from });
+    return { schema } as unknown as import('@supabase/supabase-js').SupabaseClient;
+  }
+
+  it('emits intelligence.user.correction with the input fields plus a stamped occurredAt', async () => {
+    const bus = new InProcessEventBus();
+    const intelligenceOS = new IntelligenceOS({ supabase: createMockSupabase(), eventBus: bus });
+    let received: UserCorrectionPayload | null = null;
+    bus.on('intelligence.user.correction', async (payload) => {
+      received = payload as UserCorrectionPayload;
+    });
+
+    await intelligenceOS.recordCorrection({
+      userId: 'user-001',
+      correctionType: 'tone',
+      taxonomyCategory: 'communication_style',
+      correctedValue: 'more formal',
+      context: 'from the review screen',
+    });
+
+    expect(received).not.toBeNull();
+    const payload = received as unknown as UserCorrectionPayload;
+    expect(payload.userId).toBe('user-001');
+    expect(payload.correctionType).toBe('tone');
+    expect(payload.taxonomyCategory).toBe('communication_style');
+    expect(payload.correctedValue).toBe('more formal');
+    expect(payload.context).toBe('from the review screen');
+    expect(typeof payload.occurredAt).toBe('string');
+  });
+
+  it('defaults taxonomyCategory and context to null when omitted', async () => {
+    const bus = new InProcessEventBus();
+    const intelligenceOS = new IntelligenceOS({ supabase: createMockSupabase(), eventBus: bus });
+    let received: UserCorrectionPayload | null = null;
+    bus.on('intelligence.user.correction', async (payload) => {
+      received = payload as UserCorrectionPayload;
+    });
+
+    await intelligenceOS.recordCorrection({
+      userId: 'user-001',
+      correctionType: 'other',
+      correctedValue: 'freeform correction text',
+    });
+
+    const payload = received as unknown as UserCorrectionPayload;
+    expect(payload.taxonomyCategory).toBeNull();
+    expect(payload.context).toBeNull();
+  });
+
+  it('end-to-end: drives FeedbackProcessor.processCorrection() → LearningValidator.maybeConfirm() via the real event bus', async () => {
+    const bus = new InProcessEventBus();
+    const intelligenceOS = new IntelligenceOS({ supabase: createMockSupabase(), eventBus: bus });
+    const spy = vi.spyOn(
+      // Accessing the private feedbackProcessor field for spy purposes, to
+      // verify the real end-to-end event-bus wiring rather than mocking it.
+      intelligenceOS['feedbackProcessor'] as FeedbackProcessor,
+      'processCorrection',
+    );
+
+    await intelligenceOS.recordCorrection({
+      userId: 'user-001',
+      correctionType: 'tone',
+      taxonomyCategory: 'communication_style',
+      correctedValue: 'more formal',
     });
 
     // InProcessEventBus handlers are fire-and-forget; give the microtask
