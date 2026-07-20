@@ -126,12 +126,84 @@ export interface RebuildDecision {
 // ── ProfileBuilder ────────────────────────────────────────────────────────────
 
 export class ProfileBuilder {
+  /**
+   * G-7 (Architecture Verification Report, P1) — trailing-edge scheduler for
+   * the Knowledge-triggered rebuild debounce. Keyed by Subject
+   * (`${subjectType}:${subjectId}`) so a burst of uploads across different
+   * subjects never shares a timer. `InProcessEventBus` is synchronous/
+   * in-process and there is no persistent job queue yet (Sprint 4 per the
+   * codebase's own roadmap comments), so this is a `setTimeout`-based
+   * deferred call, not a durable job — a process restart mid-burst loses
+   * the pending trailing rebuild. Acceptable for now; Sprint 4's queue is
+   * the tracked follow-up for durable scheduling (see this method's own
+   * docblock below and `shouldRebuildForSubjectFromKnowledge`'s).
+   */
+  private readonly pendingKnowledgeRebuilds = new Map<string, ReturnType<typeof setTimeout>>();
+
   constructor(
     private readonly userDomain: UserIntelligenceDomain,
     private readonly bus: IntelligenceEventBus,
     /** ADR-004 (Cognitive Consolidation) — the Knowledge-side read this class gained. */
     private readonly knowledgeDomain: KnowledgeIntelligenceDomain,
   ) {}
+
+  private subjectKey(subject: SubjectRef): string {
+    return `${subject.subjectType}:${subject.subjectId}`;
+  }
+
+  /**
+   * G-7 — schedules (or resets, if one is already pending for this Subject)
+   * a trailing-edge rebuild timer for `KNOWLEDGE_REBUILD_DEBOUNCE_MS` past
+   * *this* call — i.e. past the *last* upload in the burst, not the first.
+   * Each subsequent debounced upload in the same burst pushes the timer
+   * back out, so the deferred rebuild only fires once the burst has gone
+   * fully quiet for a whole debounce window. When it fires, it rebuilds
+   * unconditionally — bypassing `shouldRebuildForSubjectFromKnowledge()`'s
+   * own leading-edge check, since firing this timer *is* the deferred
+   * rebuild that check deliberately deferred.
+   *
+   * Never throws — a failed deferred rebuild is logged and swallowed,
+   * matching `FeedbackProcessor.processKnowledgeExtraction()`'s existing
+   * best-effort convention for this same trigger path.
+   */
+  private scheduleTrailingKnowledgeRebuild(subject: SubjectRef): void {
+    const key = this.subjectKey(subject);
+    const existing = this.pendingKnowledgeRebuilds.get(key);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this.pendingKnowledgeRebuilds.delete(key);
+      this.rebuildForSubject(subject, ['knowledge']).catch((err) => {
+        console.error(
+          `[ProfileBuilder] G-7 deferred Knowledge-triggered rebuild failed for subject ${key}:`,
+          err,
+        );
+      });
+    }, KNOWLEDGE_REBUILD_DEBOUNCE_MS);
+
+    // A pending trailing rebuild should never keep a process/test runner
+    // alive on its own — matches how a real job-queue worker wouldn't
+    // block process exit either.
+    if (typeof timer.unref === 'function') timer.unref();
+
+    this.pendingKnowledgeRebuilds.set(key, timer);
+  }
+
+  /**
+   * Cancels any pending trailing Knowledge rebuild for this Subject. Called
+   * from `rebuildForSubject()` so that ANY rebuild — whichever trigger
+   * caused it — cancels a redundant deferred rebuild still pending for the
+   * same Subject; the profile is now current, so there is nothing left for
+   * the deferred timer to do.
+   */
+  private cancelPendingKnowledgeRebuild(subject: SubjectRef): void {
+    const key = this.subjectKey(subject);
+    const existing = this.pendingKnowledgeRebuilds.get(key);
+    if (existing) {
+      clearTimeout(existing);
+      this.pendingKnowledgeRebuilds.delete(key);
+    }
+  }
 
   /**
    * Evaluates whether a profile rebuild is needed for the given user,
@@ -250,9 +322,18 @@ export class ProfileBuilder {
 
     const msSinceLastUpdate = Date.now() - currentProfile.updatedAt.getTime();
     if (msSinceLastUpdate < KNOWLEDGE_REBUILD_DEBOUNCE_MS) {
+      // G-7 (Architecture Verification Report, P1) — the leading-edge
+      // debounce above is unchanged (isolated uploads still behave exactly
+      // as before), but a debounced upload is no longer a dead end: it
+      // schedules (or resets) a trailing-edge timer so a burst of uploads
+      // eventually converges to one rebuild reflecting the whole burst,
+      // instead of silently reflecting only whichever upload happened to
+      // fall outside the debounce window.
+      this.scheduleTrailingKnowledgeRebuild(subject);
+
       return {
         shouldRebuild: false,
-        reason: `Debounced — last rebuild was ${Math.round(msSinceLastUpdate / 1000)}s ago, below the ${KNOWLEDGE_REBUILD_DEBOUNCE_MS / 1000}s debounce window`,
+        reason: `Debounced — last rebuild was ${Math.round(msSinceLastUpdate / 1000)}s ago, below the ${KNOWLEDGE_REBUILD_DEBOUNCE_MS / 1000}s debounce window; a deferred rebuild is scheduled once this burst ends (G-7)`,
         newLearningsCount: 0,
       };
     }
@@ -296,6 +377,11 @@ export class ProfileBuilder {
    * User's does (ADR-003 §2.3 — no separate WorkspaceProfile table).
    */
   async rebuildForSubject(subject: SubjectRef, changedDomains: string[] = []): Promise<IntelligenceProfile> {
+    // G-7 — this rebuild (whatever triggered it) makes the profile current
+    // again, so any deferred trailing rebuild still pending for this
+    // Subject would now be redundant.
+    this.cancelPendingKnowledgeRebuild(subject);
+
     const learnings = await this.userDomain.getAllActiveLearningsForSubject(subject);
     // ADR-004 (Cognitive Consolidation) §3.2 — the one new read this method
     // gained. Not gated behind which trigger caused this call; every

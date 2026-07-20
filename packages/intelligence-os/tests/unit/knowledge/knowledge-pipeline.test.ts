@@ -267,7 +267,7 @@ describe('KnowledgeProcessor', () => {
     bus = new InProcessEventBus();
   });
 
-  function makeProcessor(returnedData?: Record<string, unknown>) {
+  function makeProcessor(returnedData?: Record<string, unknown>, logger?: Pick<Console, 'info' | 'warn' | 'error'>) {
     const mockData = returnedData ?? {
       id: 'asset-001',
       owner_type: 'user',
@@ -305,7 +305,7 @@ describe('KnowledgeProcessor', () => {
     chain['eq']      = vi.fn().mockReturnThis();
     chain['single']  = vi.fn().mockResolvedValue(singleResponse);
 
-    return { processor: new KnowledgeProcessor(new KnowledgeIntelligenceDomain(chain as unknown as import('@supabase/supabase-js').SupabaseClient), bus), db: chain };
+    return { processor: new KnowledgeProcessor(new KnowledgeIntelligenceDomain(chain as unknown as import('@supabase/supabase-js').SupabaseClient), bus, logger), db: chain };
   }
 
   it('runs the full pipeline and returns a result', async () => {
@@ -470,6 +470,169 @@ describe('KnowledgeProcessor', () => {
     // Result asset ownerType comes from the job (input), not the mock DB row
     expect(result.assetId).toBe('asset-001');
     expect(result.errors.filter(e => e.stage === 'extract')).toHaveLength(0);
+  });
+});
+
+// ── G-21 (Architecture Verification Report, P0) — structured logging ─────────
+// KnowledgeProcessor.process() previously had zero structured logging (the
+// sharpest instance of RC-5/RC-3 the verification pass identified). These
+// tests assert the new log line fires with the expected fields for both a
+// passing and a failing validationResult, using the data already collected
+// in-memory by process() rather than any new computation.
+describe('KnowledgeProcessor — G-21 structured logging', () => {
+  let bus: InProcessEventBus;
+
+  beforeEach(() => {
+    bus = new InProcessEventBus();
+  });
+
+  function makeProcessorWithLogger(returnedData?: Record<string, unknown>) {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const mockData = returnedData ?? {
+      id: 'asset-001',
+      owner_type: 'user',
+      user_id: 'user-001',
+      project_id: null,
+      workspace_id: null,
+      asset_type: 'playbook',
+      title: 'GTM Playbook',
+      source_file_ref: null,
+      extracted_vocabulary: {},
+      extracted_patterns: {},
+      extracted_frameworks: {},
+      confidence: 0.80,
+      version: 1,
+      is_current: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const listResponse = { data: [], error: null };
+    const chain: Record<string, unknown> = {};
+    chain['then'] = (resolve: (v: typeof listResponse) => void) => resolve(listResponse);
+    chain['schema'] = vi.fn().mockReturnThis();
+    chain['from']   = vi.fn().mockReturnThis();
+    chain['select'] = vi.fn().mockReturnThis();
+    chain['upsert'] = vi.fn().mockReturnThis();
+    chain['eq']     = vi.fn().mockReturnThis();
+    chain['single'] = vi.fn().mockResolvedValue({ data: mockData, error: null });
+
+    const processor = new KnowledgeProcessor(
+      new KnowledgeIntelligenceDomain(chain as unknown as import('@supabase/supabase-js').SupabaseClient),
+      bus,
+      logger,
+    );
+    return { processor, logger };
+  }
+
+  it('logs one structured line reporting stage outcomes and final state for a passing validationResult', async () => {
+    const { processor, logger } = makeProcessorWithLogger();
+    const result = await processor.process(baseInput(), RICH_CONTENT, 'asset-001');
+
+    expect(logger.info).toHaveBeenCalledWith(
+      '[KnowledgeProcessor] process() complete:',
+      expect.objectContaining({
+        assetId: 'asset-001',
+        lifecycleState: result.lifecycleState,
+        confidence: result.validationResult.confidence,
+        passed: true,
+        termCount: result.vocabularyResult.termCount,
+        frameworkCount: result.frameworkResult.frameworkCount,
+        patternCount: result.patternResult.patternCount,
+        isVisualAsset: false,
+        errorCount: 0,
+      }),
+    );
+
+    const [, payload] = logger.info.mock.calls.find(
+      ([msg]) => msg === '[KnowledgeProcessor] process() complete:',
+    )!;
+    expect(payload.stageOutcomes).toEqual({
+      extract: 'pass', vocabulary: 'pass', framework: 'pass',
+      pattern: 'pass', visual: 'pass', validation: 'pass', persist: 'pass',
+    });
+  });
+
+  it('logs stage failure for a failing validationResult (empty content)', async () => {
+    const { processor, logger } = makeProcessorWithLogger();
+    const result = await processor.process(baseInput(), EMPTY_CONTENT, 'asset-001');
+
+    expect(logger.info).toHaveBeenCalledWith(
+      '[KnowledgeProcessor] process() complete:',
+      expect.objectContaining({
+        assetId: 'asset-001',
+        lifecycleState: 'EXTRACTED',
+        passed: false,
+      }),
+    );
+    expect(result.validationResult.passed).toBe(false);
+  });
+
+  it('logs exactly once per process() invocation (regression guard against RC-1 recurring silently)', async () => {
+    const { processor, logger } = makeProcessorWithLogger();
+    await processor.process(baseInput(), RICH_CONTENT, 'asset-001');
+
+    const completionCalls = logger.info.mock.calls.filter(
+      ([msg]) => msg === '[KnowledgeProcessor] process() complete:',
+    );
+    expect(completionCalls).toHaveLength(1);
+  });
+
+  it('reflects a persist-stage failure in stageOutcomes', async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const listResponse = { data: [], error: null };
+    const failChain: Record<string, unknown> = {};
+    failChain['then'] = (resolve: (v: typeof listResponse) => void) => resolve(listResponse);
+    failChain['schema'] = vi.fn().mockReturnThis();
+    failChain['from']   = vi.fn().mockReturnThis();
+    failChain['select'] = vi.fn().mockReturnThis();
+    failChain['upsert'] = vi.fn().mockReturnThis();
+    failChain['eq']     = vi.fn().mockReturnThis();
+    failChain['single'] = vi.fn().mockResolvedValue({ data: null, error: { message: 'DB connection failed' } });
+
+    const processor = new KnowledgeProcessor(
+      new KnowledgeIntelligenceDomain(failChain as unknown as import('@supabase/supabase-js').SupabaseClient),
+      bus,
+      logger,
+    );
+    await processor.process(baseInput(), RICH_CONTENT, 'asset-001');
+
+    const [, payload] = logger.info.mock.calls.find(
+      ([msg]) => msg === '[KnowledgeProcessor] process() complete:',
+    )!;
+    expect(payload.stageOutcomes.persist).toBe('fail');
+    expect(payload.errorCount).toBeGreaterThan(0);
+  });
+
+  it('defaults to console when no logger is injected (production boot requires no extra wiring)', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const listResponse = { data: [], error: null };
+    const chain: Record<string, unknown> = {};
+    chain['then'] = (resolve: (v: typeof listResponse) => void) => resolve(listResponse);
+    chain['schema'] = vi.fn().mockReturnThis();
+    chain['from']   = vi.fn().mockReturnThis();
+    chain['select'] = vi.fn().mockReturnThis();
+    chain['upsert'] = vi.fn().mockReturnThis();
+    chain['eq']     = vi.fn().mockReturnThis();
+    chain['single'] = vi.fn().mockResolvedValue({
+      data: {
+        id: 'asset-001', owner_type: 'user', user_id: 'user-001', project_id: null,
+        workspace_id: null, asset_type: 'playbook', title: 'GTM Playbook', source_file_ref: null,
+        extracted_vocabulary: {}, extracted_patterns: {}, extracted_frameworks: {},
+        confidence: 0.80, version: 1, is_current: true,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      },
+      error: null,
+    });
+
+    const processor = new KnowledgeProcessor(
+      new KnowledgeIntelligenceDomain(chain as unknown as import('@supabase/supabase-js').SupabaseClient),
+      bus,
+    );
+    await processor.process(baseInput(), RICH_CONTENT, 'asset-001');
+
+    expect(infoSpy).toHaveBeenCalledWith('[KnowledgeProcessor] process() complete:', expect.anything());
+    infoSpy.mockRestore();
   });
 });
 

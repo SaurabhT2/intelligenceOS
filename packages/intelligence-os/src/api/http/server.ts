@@ -258,7 +258,14 @@ export function createCognitionHttpServer(
       // intentionally NOT stubbed here per "only implement what is
       // necessary now."
       if (req.method === 'POST' && url.pathname === '/v1/knowledge/ingest') {
+        // G-21 (Architecture Verification Report, P0) — request-level
+        // logging matching the granularity of BrandOS's own route-level
+        // logging, and giving the confirmation trace (R-P0-1) a
+        // request-receipt/completion pair to correlate against
+        // KnowledgeProcessor's own stage-by-stage log line.
+        const receivedAt = Date.now();
         if (!knowledge) {
+          logger.info('[cognition-http] POST /v1/knowledge/ingest received; not configured', {});
           sendJson(res, 501, { error: 'knowledge ingestion not configured on this server' });
           return;
         }
@@ -267,7 +274,15 @@ export function createCognitionHttpServer(
           rawContent?: string;
           existingAssetId?: string;
         };
+        logger.info('[cognition-http] POST /v1/knowledge/ingest received:', {
+          assetType: body?.asset?.assetType,
+          existingAssetId: body?.existingAssetId,
+        });
         if (!body?.asset) {
+          logger.info('[cognition-http] POST /v1/knowledge/ingest complete:', {
+            status: 400,
+            durationMs: Date.now() - receivedAt,
+          });
           sendJson(res, 400, { error: 'asset is required' });
           return;
         }
@@ -276,6 +291,11 @@ export function createCognitionHttpServer(
           body.rawContent,
           body.existingAssetId,
         );
+        logger.info('[cognition-http] POST /v1/knowledge/ingest complete:', {
+          status: 201,
+          assetId,
+          durationMs: Date.now() - receivedAt,
+        });
         sendJson(res, 201, { assetId });
         return;
       }

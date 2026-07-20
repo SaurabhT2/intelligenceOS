@@ -64,16 +64,27 @@ export class KnowledgeProcessor {
   private readonly patternExtractor:  PatternExtractor;
   private readonly visualExtractor:   VisualFeatureExtractor;
   private readonly validator:         KnowledgeValidator;
+  private readonly logger:            Pick<Console, 'info' | 'warn' | 'error'>;
 
   constructor(
     private readonly knowledgeDomain: KnowledgeIntelligenceDomain,
     private readonly bus: IntelligenceEventBus,
+    /**
+     * G-21 (Architecture Verification Report, P0) — instruments the
+     * Knowledge Pipeline to the same standard `CognitionProviderImpl`
+     * already holds for the Learning Pipeline: an injectable logger
+     * (tests can supply a spy), defaulting to `console` so production
+     * boots with real output with no extra wiring. Never affects control
+     * flow — a logging failure must not fail extraction.
+     */
+    logger?: Pick<Console, 'info' | 'warn' | 'error'>,
   ) {
     this.assetExtractor     = new KnowledgeAssetExtractor();
     this.vocabExtractor     = new VocabularyExtractor();
     this.frameworkExtractor = new FrameworkExtractor();
     this.patternExtractor   = new PatternExtractor();
     this.visualExtractor    = new VisualFeatureExtractor();
+    this.logger             = logger ?? console;
 
     // Validator consults existing assets for corroboration and duplicate checks.
     this.validator = new KnowledgeValidator(async () => {
@@ -231,6 +242,43 @@ export class KnowledgeProcessor {
       });
     } catch {
       // Non-fatal
+    }
+
+    // ── G-21 structured logging ────────────────────────────────────────────
+    // Mirrors CognitionProviderImpl's Learning Pipeline standard: one
+    // structured line per process() invocation reporting stage-by-stage
+    // pass/fail (derived from the `errors` array already collected above —
+    // no new computation, per the finding's approach) alongside final
+    // lifecycleState/confidence and the extraction counts. Closes RC-5/RC-3
+    // for the Knowledge Pipeline specifically, and gives R-P0-1's
+    // confirmation trace something concrete to inspect (`knowledge:YES`/
+    // `[KnowledgeProcessor]` correlation).
+    try {
+      const failedStages = new Set(errors.map((e) => e.stage));
+      const stageOutcomes: Record<string, 'pass' | 'fail'> = {
+        extract:    failedStages.has('extract')    ? 'fail' : 'pass',
+        vocabulary: failedStages.has('vocabulary') ? 'fail' : 'pass',
+        framework:  failedStages.has('framework')  ? 'fail' : 'pass',
+        pattern:    failedStages.has('pattern')    ? 'fail' : 'pass',
+        visual:     failedStages.has('visual')     ? 'fail' : 'pass',
+        validation: failedStages.has('validation') ? 'fail' : 'pass',
+        persist:    failedStages.has('persist')    ? 'fail' : 'pass',
+      };
+
+      this.logger.info('[KnowledgeProcessor] process() complete:', {
+        assetId,
+        lifecycleState,
+        confidence:    validationResult.confidence,
+        passed:        validationResult.passed,
+        stageOutcomes,
+        termCount:     vocabularyResult.termCount,
+        frameworkCount: frameworkResult.frameworkCount,
+        patternCount:  patternResult.patternCount,
+        isVisualAsset: visualResult?.isVisualAsset ?? false,
+        errorCount:    errors.length,
+      });
+    } catch {
+      // Non-fatal — logging must never fail extraction.
     }
 
     return {

@@ -75,8 +75,19 @@ export interface Observation {
 // ── Pipeline stage results ─────────────────────────────────────────────────────
 
 export interface PipelineRunResult {
-  /** ADR-003: for a Workspace-subject run, this is the workspaceId — see `subject` below for the unambiguous field. Retained under this name for backward compatibility with existing User-subject callers/tests. */
-  userId: string;
+  /**
+   * ADR-003 (Subject-Centric Intelligence) / G-17 (Architecture Verification
+   * Report, P2) — renamed from `userId`. This field holds whichever Subject
+   * this pipeline run processed: a real userId for a User-subject run
+   * (`FeedbackProcessor.process()`), or the workspaceId for a
+   * Workspace-subject run (`FeedbackProcessor.processObservation()`) — the
+   * old name `userId` was actively misleading on that second path, since it
+   * stored a workspace id in a field named as if it were always a user id.
+   * `subject` below is the unambiguous, structured source of truth this
+   * field is redundant with; kept for existing callers that want the bare
+   * id string without unwrapping `subject`.
+   */
+  subjectId: string;
   /** ADR-003 (Subject-Centric Intelligence) — the Subject this pipeline run processed. */
   subject: SubjectRef;
   signalsProcessed: number;

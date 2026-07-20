@@ -283,6 +283,29 @@ we operate in, and our methodology is documented in detail for every team.
       expect(persistedRow['confidence']).toBe(0.20);
       expect(persistedRow['is_current']).toBe(false);
     });
+
+    // G-21 (Architecture Verification Report, P0) — the Knowledge Pipeline
+    // now logs one structured line per process() invocation. Asserting it
+    // fires exactly once per asset serves as a regression guard against
+    // RC-1 (double-processing) recurring silently: if the event+direct-call
+    // coexistence this fix removed were ever reintroduced, this test would
+    // catch two log lines instead of one.
+    it('logs exactly one [KnowledgeProcessor] completion line per asset (RC-1 regression guard)', async () => {
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const supabase = createMockSupabase();
+      const { instance } = makeIntelligence(supabase);
+
+      await instance.ingestKnowledgeAsset(
+        { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Doc' },
+        RICH_CONTENT,
+      );
+
+      const completionCalls = infoSpy.mock.calls.filter(
+        ([msg]) => msg === '[KnowledgeProcessor] process() complete:',
+      );
+      expect(completionCalls).toHaveLength(1);
+      infoSpy.mockRestore();
+    });
   });
 
   it('RelationshipIntelligenceDomain.getRelationship() throws DomainNotActivatedError', async () => {

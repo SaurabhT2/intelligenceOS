@@ -75,6 +75,15 @@ export interface IntelligenceOSConfig {
    * or InngestEventBus for production (Sprint 4, consumer integration).
    */
   eventBus?: IntelligenceEventBus;
+
+  /**
+   * G-21 (Architecture Verification Report, P0) — injectable for tests /
+   * observability; defaults to `console`. Threaded through to
+   * `KnowledgeProcessor` so the Knowledge Pipeline logs to the same
+   * standard the Learning Pipeline already holds via
+   * `CognitionProviderImpl`.
+   */
+  logger?: Pick<Console, 'info' | 'warn' | 'error'>;
 }
 
 // ── Root class ────────────────────────────────────────────────────────────────
@@ -137,7 +146,7 @@ export class IntelligenceOS implements IIntelligenceProvider {
     // 'intelligence.knowledge_asset.uploaded' and drives the extraction
     // pipeline. Persistence routes through KnowledgeIntelligenceDomain (Gap
     // Analysis G-2, resolved this session) rather than a private client.
-    this.knowledgeProcessor = new KnowledgeProcessor(this.domains.knowledge, this.bus);
+    this.knowledgeProcessor = new KnowledgeProcessor(this.domains.knowledge, this.bus, config.logger);
     this.knowledgeProcessor.register();
   }
 

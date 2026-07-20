@@ -121,7 +121,7 @@ export class FeedbackProcessor {
    */
   async process(event: FeedbackEventPayload): Promise<PipelineRunResult> {
     const result: PipelineRunResult = {
-      userId: event.userId,
+      subjectId: event.userId,
       subject: userSubject(event.userId),
       signalsProcessed: 0,
       observationsCreated: 0,
@@ -276,7 +276,7 @@ export class FeedbackProcessor {
   async processObservation(input: ObservationInput): Promise<PipelineRunResult> {
     const subject: SubjectRef = { subjectType: 'workspace', subjectId: input.workspaceId };
     const result: PipelineRunResult = {
-      userId: input.workspaceId,
+      subjectId: input.workspaceId,
       subject,
       signalsProcessed: 0,
       observationsCreated: 0,

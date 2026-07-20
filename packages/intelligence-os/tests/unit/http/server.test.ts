@@ -65,12 +65,14 @@ describe('createCognitionHttpServer', () => {
   let server: Server;
   let baseUrl: string;
   let provider: ReturnType<typeof makeMockProvider>;
+  let serverLogger: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
 
   function start(p: ReturnType<typeof makeMockProvider>, knowledge?: KnowledgeIngestPort): Promise<void> {
     provider = p;
+    serverLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     server = createCognitionHttpServer(
       provider,
-      { apiKey: API_KEY, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } },
+      { apiKey: API_KEY, logger: serverLogger },
       knowledge,
     );
     return new Promise((resolve) => {
@@ -253,6 +255,72 @@ describe('createCognitionHttpServer', () => {
       const body = (await res.json()) as { error: string };
       expect(body.error).toBe('internal error');
       await stop();
+    });
+  });
+
+  describe('POST /v1/knowledge/ingest (G-21, Architecture Verification Report P0)', () => {
+    afterAll(() => stop());
+
+    it('returns 501 when the server was not configured with a KnowledgeIngestPort', async () => {
+      await start(makeMockProvider());
+      const res = await fetch(`${baseUrl}/v1/knowledge/ingest`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset: { ownerType: 'user', userId: 'u-1', assetType: 'playbook', title: 'Doc' } }),
+      });
+      expect(res.status).toBe(501);
+    });
+
+    it('returns 400 when asset is missing, without calling ingestKnowledgeAsset', async () => {
+      const ingestKnowledgeAsset = vi.fn().mockResolvedValue('asset-1');
+      await start(makeMockProvider(), { ingestKnowledgeAsset });
+      const res = await fetch(`${baseUrl}/v1/knowledge/ingest`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawContent: 'some content' }),
+      });
+      expect(res.status).toBe(400);
+      expect(ingestKnowledgeAsset).not.toHaveBeenCalled();
+    });
+
+    it('ingests the asset and returns the persisted assetId, 201', async () => {
+      const ingestKnowledgeAsset = vi.fn().mockResolvedValue('asset-known-1');
+      await start(makeMockProvider(), { ingestKnowledgeAsset });
+      const body = {
+        asset: { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Doc' },
+        rawContent: 'some real content',
+      };
+      const res = await fetch(`${baseUrl}/v1/knowledge/ingest`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ assetId: 'asset-known-1' });
+      expect(ingestKnowledgeAsset).toHaveBeenCalledWith(body.asset, body.rawContent, undefined);
+    });
+
+    it('produces a request-received and a request-completion log line (G-21 acceptance criterion)', async () => {
+      const ingestKnowledgeAsset = vi.fn().mockResolvedValue('asset-known-2');
+      await start(makeMockProvider(), { ingestKnowledgeAsset });
+      const body = {
+        asset: { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Doc' },
+        rawContent: 'some real content',
+      };
+      await fetch(`${baseUrl}/v1/knowledge/ingest`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const infoCalls = serverLogger.info.mock.calls as [string, Record<string, unknown>][];
+      const received = infoCalls.find(([msg]) => msg.includes('/v1/knowledge/ingest received'));
+      const completed = infoCalls.find(([msg]) => msg.includes('/v1/knowledge/ingest complete'));
+
+      expect(received).toBeDefined();
+      expect(completed).toBeDefined();
+      expect(completed?.[1]).toMatchObject({ status: 201, assetId: 'asset-known-2' });
+      expect(typeof completed?.[1]['durationMs']).toBe('number');
     });
   });
 

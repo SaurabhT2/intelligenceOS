@@ -14,7 +14,7 @@
  * duplicated here.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ProfileBuilder } from '../../../src/pipeline/ProfileBuilder';
 import { InProcessEventBus } from '../../../src/events/IntelligenceEventBus';
 import { userSubject, workspaceSubject } from '../../../src/types/subject';
@@ -165,6 +165,107 @@ describe('ProfileBuilder — Knowledge-trigger debounce (ADR-004 §12.2)', () =>
 
     expect(decision.shouldRebuild).toBe(true);
     expect(decision.reason).toContain('asset-3');
+  });
+
+  // ── G-7 (Architecture Verification Report, P1) ────────────────────────────
+  // Debounce individual triggers but schedule one deferred rebuild after a
+  // burst ends, so a bulk upload eventually converges to a full rebuild
+  // reflecting every document in the burst, not just whichever one
+  // happened to land outside the 5-minute debounce window.
+  describe('G-7 — trailing-edge deferred rebuild after a burst ends', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('a burst of N debounced uploads converges to exactly one deferred rebuild at burst-end', async () => {
+      const recent = makeProfile({ updatedAt: new Date(Date.now() - 60 * 1000) }); // 1 minute ago
+      const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: recent });
+      const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+
+      // Simulate 19 uploads in rapid succession, each individually debounced.
+      for (let i = 0; i < 19; i++) {
+        const decision = await builder.shouldRebuildForSubjectFromKnowledge(userSubject('user-1'), `asset-${i}`);
+        expect(decision.shouldRebuild).toBe(false);
+        await vi.advanceTimersByTimeAsync(10_000); // 10s apart — well inside the 5-minute window
+      }
+
+      expect(userDomain.upsertProfile).not.toHaveBeenCalled();
+
+      // Burst goes quiet — advance past a full debounce window from the
+      // *last* upload with nothing further resetting the timer.
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1_000);
+
+      expect(userDomain.upsertProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('resets the trailing timer on each new debounced upload, not just the first', async () => {
+      const recent = makeProfile({ updatedAt: new Date(Date.now() - 1_000) }); // 1s ago — plenty of headroom
+      const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: recent });
+      const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+
+      await builder.shouldRebuildForSubjectFromKnowledge(userSubject('user-1'), 'asset-a'); // t=0, timer → t=300000
+      await vi.advanceTimersByTimeAsync(250_000); // t=250000; age=251000s, still well under the 300000ms threshold
+      await builder.shouldRebuildForSubjectFromKnowledge(userSubject('user-1'), 'asset-b'); // resets timer → t=550000
+      await vi.advanceTimersByTimeAsync(51_000); // t=301000 — past asset-a's original (now-superseded) fire time
+
+      // The original timer's window has now passed, but it was reset — no rebuild yet.
+      expect(userDomain.upsertProfile).not.toHaveBeenCalled();
+
+      // Now let the (reset) timer actually elapse.
+      await vi.advanceTimersByTimeAsync(250_000); // t=551000, past the reset fire time of 550000
+      expect(userDomain.upsertProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not fire a deferred rebuild if an immediate rebuild already ran for this subject', async () => {
+      const recent = makeProfile({ updatedAt: new Date(Date.now() - 60 * 1000) });
+      const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: recent });
+      const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+
+      // A debounced upload schedules a trailing timer...
+      await builder.shouldRebuildForSubjectFromKnowledge(userSubject('user-1'), 'asset-a');
+      // ...but a real rebuild happens for some other reason (e.g. a Learning
+      // trigger) before the trailing timer fires.
+      await builder.rebuildForSubject(userSubject('user-1'), ['user_intelligence']);
+      expect(userDomain.upsertProfile).toHaveBeenCalledTimes(1);
+
+      // The trailing timer must have been cancelled — no second rebuild.
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1_000);
+      expect(userDomain.upsertProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('keys pending trailing rebuilds per-Subject — a burst for one workspace does not affect another', async () => {
+      const recent = makeProfile({ updatedAt: new Date(Date.now() - 60 * 1000) });
+      const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: recent });
+      const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+
+      await builder.shouldRebuildForSubjectFromKnowledge(workspaceSubject('ws-1'), 'asset-a');
+      await builder.shouldRebuildForSubjectFromKnowledge(workspaceSubject('ws-2'), 'asset-b');
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1_000);
+
+      // Both subjects' independent trailing timers fire — one rebuild each.
+      expect(userDomain.upsertProfile).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not trigger a rebuild storm for uploads spaced further apart than the debounce window', async () => {
+      const recent = makeProfile({ updatedAt: new Date(Date.now() - 60 * 1000) });
+      const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: recent });
+      const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+
+      // First upload is debounced (profile updated 1 min ago) and schedules
+      // a trailing timer for +5min.
+      await builder.shouldRebuildForSubjectFromKnowledge(userSubject('user-1'), 'asset-a');
+
+      // Nothing else happens until well past the debounce window — this
+      // should behave exactly like the pre-G-7 leading-edge-only debounce:
+      // a single rebuild, not a storm, and not a second redundant one.
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1_000);
+      expect(userDomain.upsertProfile).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

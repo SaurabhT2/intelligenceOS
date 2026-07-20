@@ -575,7 +575,7 @@ describe('FeedbackProcessor', () => {
   it('processes an accepted event without throwing', async () => {
     const { processor } = makeProcessor();
     const result = await processor.process(makeFeedbackPayload({ eventType: 'accepted' }));
-    expect(result.userId).toBe('user-001');
+    expect(result.subjectId).toBe('user-001');
     expect(result.signalsProcessed).toBeGreaterThan(0);
     expect(result.observationsCreated).toBeGreaterThan(0);
   });
@@ -719,7 +719,7 @@ describe('FeedbackProcessor', () => {
     const result = await processor.process(makeFeedbackPayload({ eventType: 'accepted' }));
     // Should not throw — errors captured in result
     expect(result).toBeDefined();
-    expect(result.userId).toBe('user-001');
+    expect(result.subjectId).toBe('user-001');
   });
 
   it('emits intelligence.signal.extracted event during processing when hypothesis succeeds', async () => {

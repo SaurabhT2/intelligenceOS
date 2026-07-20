@@ -227,5 +227,27 @@ describe('SignalExtractor', () => {
       const successSignal = signals.find(s => s.taxonomyCategory === 'success_metrics')!;
       expect(successSignal.rawContent['normalizedScore']).toBeCloseTo(0.82);
     });
+
+    // G-22 (Architecture Verification Report, P2) — several BrandOS-side
+    // comments referenced a nonexistent "Gate 1 (score < 75)" threshold;
+    // the actual gate is `isMeaningfulScore(score) = score > 0` (this
+    // file, top of extractFromObservation()'s implementation). This test
+    // documents the real, current behavior for a governance-FAILED
+    // observation (score: 50 is below BrandOS's approval/governance
+    // thresholds, which sit around 70-90 depending on artifact type — see
+    // @brandos/governance-config — but 50 is still > 0). Whether a
+    // governance-failed artifact's observation *should* still produce
+    // Learning Pipeline signals is a separate product question the
+    // Verification Report explicitly scoped OUT of this finding — this
+    // test only pins down what the code actually does today, so a future
+    // change to that behavior is a deliberate, visible decision rather
+    // than an untested regression.
+    it('produces signals for a governance-failed score of 50 (score > 0 gate, not a pass/fail threshold — documents current behavior, see G-22)', () => {
+      const signals = extractor.extractFromObservation(makeObservationInput({ score: 50 }));
+
+      const successSignal = signals.find(s => s.taxonomyCategory === 'success_metrics');
+      expect(successSignal).toBeDefined();
+      expect(successSignal!.rawContent['normalizedScore']).toBeCloseTo(0.5);
+    });
   });
 });
