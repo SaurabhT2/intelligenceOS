@@ -90,3 +90,25 @@ export class DatabaseError extends IntelligenceOSError {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+/**
+ * Thrown specifically when `UserIntelligenceDomain.upsertProfile()` hits
+ * the `intelligence_profiles_*_current` partial unique index (Postgres
+ * 23505) — i.e., a concurrent rebuild for the same Subject won the race to
+ * insert the new "current" version first. This is a distinct, expected,
+ * retryable condition (not a real failure): `ProfileBuilder.rebuildForSubject()`
+ * catches this specifically and retries against the winner's now-committed
+ * state, rather than surfacing it as a generic DatabaseError that callers
+ * would have no principled reason to retry.
+ */
+export class ProfileVersionConflictError extends IntelligenceOSError {
+  constructor(cause: unknown) {
+    super(
+      'Concurrent profile rebuild for this Subject already committed a newer current version.',
+      'PROFILE_VERSION_CONFLICT',
+      cause,
+    );
+    this.name = 'ProfileVersionConflictError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}

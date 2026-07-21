@@ -51,6 +51,7 @@ import type { KnowledgeIntelligenceDomain } from '../domains/KnowledgeIntelligen
 import type { IntelligenceEventBus } from '../events/IntelligenceEventBus';
 import type { ExtractedFramework, FrameworkExtractionResult, VocabularyExtractionResult } from '../knowledge/types';
 import { userSubject, type SubjectRef } from '../types/subject';
+import { IntelligenceOSError, ProfileVersionConflictError } from '../errors';
 
 // ── Taxonomy impact weights (Section G — Intelligence Value Hierarchy) ─────────
 // Categories rated ★★★★★ in artifact quality OR personalization get weight 1.0;
@@ -388,56 +389,85 @@ export class ProfileBuilder {
     // rebuild reads both inputs, regardless of why it was invoked (§3.2's
     // central point).
     const knowledgeAssets = await this.knowledgeDomain.getCurrentAssetsForSubject(subject);
-    const currentProfile = await this.userDomain.getCurrentProfileForSubject(subject);
-
-    const nextVersion = (currentProfile?.version ?? 0) + 1;
     const compositeConfidence = computeCompositeConfidence(learnings);
     const summaries = buildDomainSummaries(learnings, knowledgeAssets);
 
-    const newProfile: IntelligenceProfile = {
-      id:                   crypto.randomUUID(),
-      userId:               subject.subjectType === 'user' ? subject.subjectId : null,
-      workspaceId:          subject.subjectType === 'workspace' ? subject.subjectId : null,
-      subjectType:          subject.subjectType,
-      version:              nextVersion,
-      isCurrent:            true,
-      compositeConfidence,
-      archetypePrimary:     currentProfile?.archetypePrimary ?? null,
-      archetypeConfidence:  currentProfile?.archetypeConfidence ?? null,
-      voiceSummary:         summaries.voice,
-      goalSummary:          summaries.goals,
-      constraintSummary:    summaries.constraints,
-      preferenceSummary:    summaries.preferences,
-      expertiseDomains:     summaries.expertise,
-      vocabularySnapshot:   summaries.vocabulary,
-      knowledgeSummary:     summaries.knowledge,
-      reasoningSummary:     summaries.reasoning,
-      positioningSummary:   summaries.positioning,
-      createdAt:            new Date(),
-      updatedAt:            new Date(),
-    };
+    // Concurrent rebuilds for the same Subject (e.g. several knowledge
+    // assets finishing extraction around the same moment, each triggering
+    // their own rebuild) race on which one gets to insert the next
+    // "current" version first — intelligence_profiles_{user,workspace}
+    // _current is a partial unique index, so exactly one INSERT can win.
+    // Rather than surface the loser's attempt as a failure (previously:
+    // an uncaught 23505 propagating out of upsertProfile()), retry against
+    // the winner's now-committed state — re-read currentProfile, recompute
+    // nextVersion, try again. Bounded at 3 attempts: sustained conflict
+    // across 3 tries would mean continuous concurrent rebuilds for one
+    // Subject, which isn't a realistic steady state and should surface as
+    // a real error rather than retry forever.
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const currentProfile = await this.userDomain.getCurrentProfileForSubject(subject);
+      const nextVersion = (currentProfile?.version ?? 0) + 1;
 
-    // Persist new profile version
-    await this.userDomain.upsertProfile(newProfile);
+      const newProfile: IntelligenceProfile = {
+        id:                   crypto.randomUUID(),
+        userId:               subject.subjectType === 'user' ? subject.subjectId : null,
+        workspaceId:          subject.subjectType === 'workspace' ? subject.subjectId : null,
+        subjectType:          subject.subjectType,
+        version:              nextVersion,
+        isCurrent:            true,
+        compositeConfidence,
+        archetypePrimary:     currentProfile?.archetypePrimary ?? null,
+        archetypeConfidence:  currentProfile?.archetypeConfidence ?? null,
+        voiceSummary:         summaries.voice,
+        goalSummary:          summaries.goals,
+        constraintSummary:    summaries.constraints,
+        preferenceSummary:    summaries.preferences,
+        expertiseDomains:     summaries.expertise,
+        vocabularySnapshot:   summaries.vocabulary,
+        knowledgeSummary:     summaries.knowledge,
+        reasoningSummary:     summaries.reasoning,
+        positioningSummary:   summaries.positioning,
+        createdAt:            new Date(),
+        updatedAt:            new Date(),
+      };
 
-    // Mark previous version non-current
-    if (currentProfile) {
-      await this.userDomain.markPreviousProfilesNonCurrentForSubject(subject, newProfile.id);
+      try {
+        await this.userDomain.upsertProfile(newProfile);
+      } catch (err) {
+        if (err instanceof ProfileVersionConflictError && attempt < MAX_ATTEMPTS) {
+          continue;
+        }
+        throw err;
+      }
+
+      // Mark previous version non-current
+      if (currentProfile) {
+        await this.userDomain.markPreviousProfilesNonCurrentForSubject(subject, newProfile.id);
+      }
+
+      // Emit profile.updated event
+      await this.bus.emit('intelligence.profile.updated', {
+        userId: subject.subjectType === 'user' ? subject.subjectId : '',
+        workspaceId: subject.subjectType === 'workspace' ? subject.subjectId : undefined,
+        subjectType: subject.subjectType,
+        profileId: newProfile.id,
+        version: nextVersion,
+        changedDomains,
+        compositeConfidence,
+        occurredAt: new Date().toISOString(),
+      });
+
+      return newProfile;
     }
 
-    // Emit profile.updated event
-    await this.bus.emit('intelligence.profile.updated', {
-      userId: subject.subjectType === 'user' ? subject.subjectId : '',
-      workspaceId: subject.subjectType === 'workspace' ? subject.subjectId : undefined,
-      subjectType: subject.subjectType,
-      profileId: newProfile.id,
-      version: nextVersion,
-      changedDomains,
-      compositeConfidence,
-      occurredAt: new Date().toISOString(),
-    });
-
-    return newProfile;
+    // Unreachable: the loop above always either returns (success) or
+    // throws (non-conflict error, or conflict on the final attempt).
+    // Present only so TypeScript can see every path returns.
+    throw new IntelligenceOSError(
+      `rebuildForSubject() exhausted ${MAX_ATTEMPTS} attempts without returning or throwing — this indicates a bug in the retry loop itself, not a real profile conflict.`,
+      'PROFILE_REBUILD_RETRY_LOOP_INVARIANT_VIOLATED',
+    );
   }
 }
 
