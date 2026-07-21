@@ -238,7 +238,7 @@ export class IntelligenceOS implements IIntelligenceProvider {
     // instead of being emitted as a content-free "notification" alongside
     // a separate, duplicate direct call.
     await this.bus.emit('intelligence.knowledge_asset.uploaded', {
-      userId:        asset.userId ?? '',
+      userId:        asset.userId ?? null,
       assetId,
       ownerType:     asset.ownerType,
       projectId:     asset.projectId ?? null,

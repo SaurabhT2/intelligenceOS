@@ -74,7 +74,7 @@ export interface FeedbackEventPayload extends FeedbackEvent {
  * Carried by: intelligence.knowledge_asset.uploaded
  */
 export interface KnowledgeAssetPayload {
-  userId: string;
+  userId: string | null;
   assetId: string;
   ownerType: 'user' | 'project' | 'workspace';
   projectId?: string | null;

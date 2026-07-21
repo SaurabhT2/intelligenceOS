@@ -50,7 +50,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { IntelligenceProfile, Learning, Archetype, Hypothesis } from '../types/entities';
 import type { DomainType, TaxonomyCategory } from '../types';
-import { DatabaseError, EntityNotFoundError, ValidationError } from '../errors';
+import { DatabaseError, EntityNotFoundError, ProfileVersionConflictError, ValidationError } from '../errors';
 import { userSubject, type SubjectRef, type SubjectType } from '../types/subject';
 
 // ── Row shapes returned by Supabase (snake_case) ─────────────────────────────
@@ -428,6 +428,18 @@ export class UserIntelligenceDomain {
       .upsert(payload, { onConflict: 'id' });
 
     if (error) {
+      // A concurrent rebuild for this same Subject already committed its
+      // "current" row first — expected under concurrent triggers (e.g.
+      // several knowledge assets finishing extraction around the same
+      // time), not a real failure. Let the caller (ProfileBuilder.
+      // rebuildForSubject()) retry against the winner's committed state
+      // instead of surfacing this as an opaque DatabaseError.
+      const isCurrentProfileRace =
+        (error as { code?: string }).code === '23505' &&
+        /intelligence_profiles_(user|workspace)_current/.test(error.message ?? '');
+      if (isCurrentProfileRace) {
+        throw new ProfileVersionConflictError(error);
+      }
       const subjectLabel = profile.subjectType === 'workspace' ? `workspace ${profile.workspaceId}` : `user ${profile.userId}`;
       throw new DatabaseError(`Failed to upsert profile ${profile.id} for ${subjectLabel}`, error);
     }
