@@ -35,8 +35,13 @@
 --     observedAt: string (ISO 8601)
 --   }
 --
--- NOT YET EXECUTED — see this repository's operational migration process
--- for 002-006; apply the same way.
+-- APPLIED — executed directly against the live Supabase project
+-- (gzimytyjtidqtudqqhfx, "IntelligenceOS") via the Supabase MCP connector; verified live against
+-- information_schema.columns (see docs/IMPLEMENTATION_STATUS.md §4 and the initial architecture
+-- review handoff under docs/handoffs/ for the verification record). This header previously read
+-- "NOT YET EXECUTED" after the migration had, in fact, already been applied out-of-band — corrected
+-- here per docs/vision.md §3's documentation-drift-is-a-defect principle. See this repository's
+-- operational migration process for 002-006 for how future migrations should be applied.
 
 alter table intelligence.hypotheses
   add column if not exists evidence_trail jsonb not null default '[]'::jsonb;
