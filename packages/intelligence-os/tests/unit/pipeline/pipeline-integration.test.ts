@@ -219,6 +219,7 @@ function makeHypothesis(overrides: Partial<Hypothesis> = {}): Hypothesis {
     contextArtifactType:     null,
     promotedLearningId:      null,
     expiresAt:               null,
+    evidenceTrail:           [],
     createdAt:               new Date(),
     updatedAt:               new Date(),
     ...overrides,

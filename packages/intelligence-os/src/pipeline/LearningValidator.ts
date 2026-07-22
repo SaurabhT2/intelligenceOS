@@ -185,6 +185,14 @@ export class LearningValidator {
       corroborations: hypothesis.currentCorroborations,
       contradictions: hypothesis.highQualityContradictions,
       promotedAt: new Date().toISOString(),
+      // Evidence/Identity Bridge (ADR-005) — the full provenance trail,
+      // copied verbatim from the Hypothesis so this Learning (and, if it's
+      // an identity-category Learning, the resulting identity trait) stays
+      // explainable after promotion: which sources contributed, which
+      // frameworks/vocabulary/observations supported it, and at what
+      // confidence each one carried. Does not participate in the
+      // promotion decision above — purely an audit record.
+      evidenceTrail: hypothesis.evidenceTrail,
     };
 
     if (triggeringObservation) {

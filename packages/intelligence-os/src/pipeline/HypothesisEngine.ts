@@ -36,7 +36,7 @@
  * Source: BrandOS Intelligence Contracts B.2 (Observation → Hypothesis gate).
  */
 
-import type { Hypothesis, StabilityClass } from '../types/entities';
+import type { Hypothesis, StabilityClass, EvidenceRecord } from '../types/entities';
 import type { UserIntelligenceDomain } from '../domains/UserIntelligenceDomain';
 import type { Observation } from './types';
 import { SOURCE_QUALITY_CEILING } from './types';
@@ -115,6 +115,11 @@ export class HypothesisEngine {
       context_artifact_type:    null as string | null,
       promoted_learning_id:     null as string | null,
       expires_at:               expiresAt,
+      // Evidence/Identity Bridge (ADR-005) — the trail starts with the
+      // Observation that created this Hypothesis. Purely additive: does
+      // not participate in required_corroborations/current_corroborations
+      // gating above.
+      evidence_trail:           [evidenceRecordFor(observation)],
     };
 
     return this.userDomain.createHypothesisForSubject(payload);
@@ -219,6 +224,9 @@ function computeCorroborationUpdates(
     confidence: newConfidence,
     state: newState,
     expires_at: computeExpiry(hypothesis.stabilityClass), // refresh expiry on corroboration
+    // Evidence/Identity Bridge (ADR-005) — append-only; does not feed any
+    // of the gating fields above.
+    evidence_trail: [...hypothesis.evidenceTrail, evidenceRecordFor(observation)],
   };
 }
 
@@ -238,6 +246,7 @@ function computeContradictionUpdates(
       high_quality_contradictions: newHighQualityContradictions,
       confidence: 0,
       state: 'REJECTED',
+      evidence_trail: [...hypothesis.evidenceTrail, evidenceRecordFor(observation)],
     };
   }
 
@@ -245,6 +254,50 @@ function computeContradictionUpdates(
     high_quality_contradictions: newHighQualityContradictions,
     confidence: newConfidence,
     state: 'CHALLENGED',
+    evidence_trail: [...hypothesis.evidenceTrail, evidenceRecordFor(observation)],
+  };
+}
+
+// ── Evidence/Identity Bridge (ADR-005) ─────────────────────────────────────────
+
+/**
+ * Resolves the `EvidenceRecord` to append to a Hypothesis's `evidence_trail`
+ * for a given Observation.
+ *
+ * If the Observation carries structured provenance (currently: any
+ * Knowledge-sourced Observation, via `EvidenceExtractor`), that record is
+ * used as-is — it already names the specific frameworks/vocabulary/document
+ * that produced it.
+ *
+ * Otherwise (the pre-existing feedback/observation extractors, which don't
+ * populate `Observation.evidence`), a minimal-but-honest record is
+ * synthesized from the Observation's own fields, tagged `sourceKind:
+ * 'experience'`. This is deliberately a *description of what's already
+ * known* (signal id, source quality, disposition), not an invented
+ * enrichment — it exists so every Hypothesis's audit trail is uniformly
+ * populated regardless of which pipeline entry point produced its
+ * Observations, without requiring `SignalExtractor`'s existing, unrelated
+ * extraction methods to be rewritten for this.
+ */
+function evidenceRecordFor(observation: {
+  signalId: string;
+  taxonomyCategory: Hypothesis['taxonomyCategory'];
+  confidence: number;
+  disposition: 'corroborating' | 'contradicting' | 'new';
+  sourceQuality: string;
+  createdAt: Date;
+  evidence?: EvidenceRecord;
+}): EvidenceRecord {
+  if (observation.evidence) return observation.evidence;
+
+  return {
+    sourceKind: 'experience',
+    sourceId: observation.signalId,
+    taxonomyCategory: observation.taxonomyCategory,
+    supportingItems: [`${observation.sourceQuality} observation (${observation.disposition})`],
+    confidence: observation.confidence,
+    disposition: observation.disposition,
+    observedAt: observation.createdAt.toISOString(),
   };
 }
 

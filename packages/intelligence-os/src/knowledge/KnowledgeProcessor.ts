@@ -238,6 +238,16 @@ export class KnowledgeProcessor {
         patternCount:  patternResult.patternCount,
         isVisualAsset: visualResult?.isVisualAsset ?? false,
         confidence:    validationResult.confidence,
+        // Evidence/Identity Bridge (ADR-005) — the event payload is
+        // documented (FeedbackProcessor.ts) as an intentionally open,
+        // extensible bag for exactly this reason. Forwarding the already-
+        // computed extraction results (rather than having the evidence
+        // path re-fetch the persisted asset) avoids a second DB read and
+        // avoids any risk of the evidence path acting on a different
+        // version of the asset than the one this event describes.
+        title:               job.title,
+        extractedFrameworks: frameworkResult,
+        extractedVocabulary: vocabularyResult,
         occurredAt:    new Date().toISOString(),
       });
     } catch {

@@ -250,9 +250,71 @@ export interface Hypothesis {
   contextArtifactType: string | null;
   promotedLearningId: string | null;
   expiresAt: Date | null;
+  /**
+   * Evidence/Identity Bridge (ADR-005) — append-only audit trail, one
+   * `EvidenceRecord` per Observation applied to this Hypothesis (see
+   * `HypothesisEngine.computeCorroborationUpdates`/
+   * `computeContradictionUpdates`). Never read by promotion-threshold math
+   * (`current_corroborations`/`required_corroborations`/
+   * `high_quality_contradictions` remain the sole gating fields, unchanged)
+   * — this exists purely so a promoted Learning (and, before promotion, the
+   * Hypothesis itself) stays explainable: which sources contributed, which
+   * frameworks/vocabulary/observations supported it, and at what confidence.
+   * Copied verbatim into `Learning.sourceSummary.evidenceTrail` on
+   * promotion. See migration 007_evidence_provenance.sql.
+   */
+  evidenceTrail: EvidenceRecord[];
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * Evidence/Identity Bridge (ADR-005) — a single, source-agnostic unit of
+ * provenance for one Observation applied to a Hypothesis. Deliberately
+ * shaped so it never assumes the evidence came from an uploaded document:
+ * `sourceKind` is an open set precisely so future evidence producers
+ * (connectors, web imports, repositories, conversations) plug into the same
+ * audit trail without a schema change — only a new `sourceKind` value and a
+ * new adapter that produces `EvidenceSourceInput` (see
+ * `pipeline/EvidenceExtractor.ts`).
+ */
+export interface EvidenceRecord {
+  sourceKind: EvidenceSourceKind;
+  /** Id of the originating record in its own domain — e.g. a knowledge_assets.id, a connector sync id, a feedback_events.artifact_id. */
+  sourceId: string;
+  /** Human-readable label for explainability surfaces — e.g. the document's title/filename. Optional: not every source kind has one yet. */
+  sourceLabel?: string;
+  taxonomyCategory: TaxonomyCategory;
+  /**
+   * The specific items that supported this evidence — framework names,
+   * vocabulary terms/phrases, or a short human-readable description of a
+   * behavioral signal (e.g. "artifact accepted without edits"). Always
+   * populated with something concrete; never a bare confidence number with
+   * no explanation of *what* was observed.
+   */
+  supportingItems: string[];
+  /** Confidence of this specific Observation (already ceiling-capped by SOURCE_QUALITY_CEILING at the point this record was created). */
+  confidence: number;
+  disposition: 'corroborating' | 'contradicting' | 'new';
+  observedAt: string;
+}
+
+/**
+ * Evidence/Identity Bridge (ADR-005) — open set of evidence origins. Add a
+ * new value here (never remove/rename an existing one — it's persisted
+ * verbatim in `evidence_trail`/`source_summary` JSONB) when a new evidence
+ * producer is built. `'experience'` covers the pre-existing
+ * feedback/observation pipeline, kept distinct from `'knowledge_asset'` so
+ * an explanation surface can always answer "did this trait come from a
+ * document or from artifact feedback?".
+ */
+export type EvidenceSourceKind =
+  | 'knowledge_asset'
+  | 'connector'
+  | 'web_import'
+  | 'repository'
+  | 'conversation'
+  | 'experience';
 
 export type SignalSourceType = 'prompt' | 'feedback_event' | 'uploaded_artifact' | 'edit_diff' | 'explicit_statement' | 'behavioral';
 

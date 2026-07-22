@@ -14,7 +14,7 @@
  * Source: BrandOS Intelligence Contracts B.2 (Signal → Observation gate).
  */
 
-import type { Signal, TaxonomyCategory, StabilityClass } from '../types/entities';
+import type { Signal, TaxonomyCategory, StabilityClass, EvidenceRecord } from '../types/entities';
 import type { DomainType } from '../types/domains';
 import type { Observation, SourceQuality } from './types';
 import { SOURCE_QUALITY_CEILING } from './types';
@@ -188,6 +188,15 @@ export class ObservationBuilder {
         ...signal.rawContent,
         signalSourceType: signal.sourceType,
       },
+      // Evidence/Identity Bridge (ADR-005): pass through the structured
+      // provenance record when the producing extractor supplied one
+      // (`EvidenceExtractor` sets `rawContent.provenance`; existing
+      // feedback/observation extractors don't, and HypothesisEngine falls
+      // back to a synthesized record in that case — see Observation.evidence's
+      // doc comment).
+      evidence: isEvidenceRecord(signal.rawContent['provenance'])
+        ? signal.rawContent['provenance']
+        : undefined,
       contextFlags: signal.contextFlags,
       createdAt: new Date(),
     };
@@ -213,6 +222,24 @@ export class ObservationBuilder {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * `signal.rawContent` is an untyped `Record<string, unknown>` bag (shared
+ * shape across every Signal producer), so a `provenance` key placed there
+ * by `EvidenceExtractor` needs a runtime check before being trusted as an
+ * `EvidenceRecord` — a narrow structural check, not full schema validation,
+ * matching this file's existing defensive-optional-chaining conventions.
+ */
+function isEvidenceRecord(value: unknown): value is EvidenceRecord {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v['sourceKind'] === 'string' &&
+    typeof v['sourceId'] === 'string' &&
+    typeof v['taxonomyCategory'] === 'string' &&
+    Array.isArray(v['supportingItems'])
+  );
+}
 
 function inferDisposition(signal: Signal): Observation['disposition'] {
   const eventType = signal.rawContent['eventType'] as string | undefined;
