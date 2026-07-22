@@ -58,6 +58,9 @@ import { ObservationBuilder } from './ObservationBuilder';
 import { HypothesisEngine } from './HypothesisEngine';
 import { LearningValidator } from './LearningValidator';
 import { ProfileBuilder } from './ProfileBuilder';
+import { EvidenceExtractor } from './EvidenceExtractor';
+import { buildKnowledgeAssetEvidenceInput } from '../knowledge/KnowledgeAssetEvidenceAdapter';
+import type { FrameworkExtractionResult, VocabularyExtractionResult } from '../knowledge/types';
 
 // ── FeedbackProcessor ─────────────────────────────────────────────────────────
 
@@ -67,6 +70,7 @@ export class FeedbackProcessor {
   private readonly hypothesisEngine: HypothesisEngine;
   private readonly learningValidator: LearningValidator;
   private readonly profileBuilder: ProfileBuilder;
+  private readonly evidenceExtractor: EvidenceExtractor;
 
   constructor(
     private readonly bus: IntelligenceEventBus,
@@ -80,6 +84,7 @@ export class FeedbackProcessor {
     this.hypothesisEngine  = new HypothesisEngine(userDomain);
     this.learningValidator = new LearningValidator(userDomain);
     this.profileBuilder    = new ProfileBuilder(userDomain, bus, knowledgeDomain);
+    this.evidenceExtractor = new EvidenceExtractor();
   }
 
   /**
@@ -110,6 +115,17 @@ export class FeedbackProcessor {
       const p = payload as { entityType?: string };
       if (p.entityType !== 'knowledge_asset') return;
       await this.processKnowledgeExtraction(payload as KnowledgeSignalExtractedPayload);
+      // Evidence/Identity Bridge (ADR-005) — independent of the rebuild-
+      // trigger check above. Deliberately a second, separate call rather
+      // than folded into processKnowledgeExtraction: that method drives
+      // the direct, descriptive Knowledge→Profile path (knowledgeSummary/
+      // vocabularySnapshot/expertise, no corroboration); this one drives
+      // the evidentiary Knowledge→Evidence→Hypothesis→Learning→Identity
+      // path (full corroboration gate, via the same Stage 2-6 machinery
+      // process()/processObservation() already use). Keeping them as two
+      // calls keeps that architectural boundary visible in the wiring
+      // itself, not just in a comment.
+      await this.processKnowledgeEvidence(payload as KnowledgeSignalExtractedPayload);
     });
   }
 
@@ -468,6 +484,135 @@ export class FeedbackProcessor {
       return { rebuilt: false };
     }
   }
+
+  /**
+   * Evidence/Identity Bridge (ADR-005) — the fifth FeedbackProcessor entry
+   * point. Converts a knowledge asset's extraction results into evidence
+   * (via `KnowledgeAssetEvidenceAdapter` + `EvidenceExtractor`) and runs it
+   * through the exact same Stage 2–6 machinery `process()`/
+   * `processObservation()` already use — `ObservationBuilder.build()`,
+   * `HypothesisEngine.process()` (matches/creates/updates a Hypothesis by
+   * `(subject, taxonomyCategory, contextScope)`, so a Hypothesis started by
+   * one document's evidence corroborates with another document's evidence,
+   * or with Experience-side observations in the same category, with zero
+   * new matching logic), `LearningValidator.evaluate()` (same promotion
+   * thresholds), and `ProfileBuilder`'s existing rebuild-trigger check.
+   *
+   * Deliberately NOT a shortcut: a knowledge asset's extracted content
+   * becomes a Hypothesis at PROVISIONAL/ACCUMULATING like any other
+   * evidence, and only promotes to a Learning (and therefore only ever
+   * reaches `identitySynthesis.ts`) once the ordinary corroboration
+   * threshold for its taxonomy category's stability class is met — see
+   * `KnowledgeAssetEvidenceAdapter.ts`'s and `EvidenceExtractor.ts`'s
+   * module docs for the evidence-quality gate this sits behind.
+   *
+   * Never throws — matches `processKnowledgeExtraction()`'s and
+   * `processCorrection()`'s existing best-effort convention; a failure
+   * here must not block the (unrelated) descriptive Knowledge→Profile path
+   * `processKnowledgeExtraction()` drives.
+   */
+  async processKnowledgeEvidence(payload: KnowledgeSignalExtractedPayload): Promise<PipelineRunResult> {
+    const subject: SubjectRef =
+      payload.ownerType === 'workspace' && payload.workspaceId
+        ? workspaceSubject(payload.workspaceId)
+        : userSubject(payload.userId);
+
+    const result: PipelineRunResult = {
+      subjectId: payload.workspaceId ?? payload.userId,
+      subject,
+      signalsProcessed: 0,
+      observationsCreated: 0,
+      hypothesesUpdated: 0,
+      learningsCreated: 0,
+      profileRebuilt: false,
+      errors: [],
+    };
+
+    let signals;
+    try {
+      const evidenceInput = buildKnowledgeAssetEvidenceInput({
+        subject,
+        projectId: null,
+        assetId: payload.entityId,
+        assetTitle: payload.title ?? payload.entityId,
+        observedAt: payload.occurredAt,
+        extractedFrameworks: payload.extractedFrameworks ?? null,
+        extractedVocabulary: payload.extractedVocabulary ?? null,
+      });
+
+      signals = evidenceInput ? this.evidenceExtractor.extract(evidenceInput) : [];
+      result.signalsProcessed = signals.length;
+    } catch (err) {
+      result.errors.push(stageError('signal', 'Evidence extraction failed', err));
+      return result;
+    }
+
+    if (signals.length === 0) return result;
+
+    const changedDomains = new Set<string>();
+    let lastLearning = null;
+
+    for (const signal of signals) {
+      let observation;
+      try {
+        observation = this.observationBuilder.build(signal);
+        if (!observation) continue;
+        result.observationsCreated++;
+      } catch (err) {
+        result.errors.push(stageError('observation', `Observation build failed for signal ${signal.id}`, err));
+        continue;
+      }
+
+      let hypothesis;
+      try {
+        hypothesis = await this.hypothesisEngine.process(observation);
+        result.hypothesesUpdated++;
+      } catch (err) {
+        result.errors.push(stageError('hypothesis', 'Hypothesis processing failed', err));
+        continue;
+      }
+
+      try {
+        const validationResult = await this.learningValidator.evaluate(hypothesis, observation);
+
+        if (validationResult.promoted && validationResult.learning) {
+          result.learningsCreated++;
+          lastLearning = validationResult.learning;
+          changedDomains.add(validationResult.learning.domain);
+
+          await this.hypothesisEngine.markPromoted(hypothesis.id, validationResult.learning.id);
+
+          await this.bus.emit('intelligence.learning.validated', {
+            userId: payload.userId,
+            workspaceId: payload.workspaceId,
+            subjectType: subject.subjectType,
+            entityId: validationResult.learning.id,
+            entityType: 'learning',
+            taxonomyCategory: validationResult.learning.taxonomyCategory,
+            confidence: validationResult.learning.confidence,
+            occurredAt: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        result.errors.push(stageError('learning', `Learning validation failed for hypothesis ${hypothesis.id}`, err));
+        continue;
+      }
+    }
+
+    if (lastLearning) {
+      try {
+        const rebuildDecision = await this.profileBuilder.shouldRebuildForSubject(subject, lastLearning);
+        if (rebuildDecision.shouldRebuild) {
+          await this.profileBuilder.rebuildForSubject(subject, Array.from(changedDomains));
+          result.profileRebuilt = true;
+        }
+      } catch (err) {
+        result.errors.push(stageError('profile', 'Profile rebuild failed', err));
+      }
+    }
+
+    return result;
+  }
 }
 
 /**
@@ -485,6 +630,10 @@ interface KnowledgeSignalExtractedPayload {
   ownerType?: 'user' | 'project' | 'workspace';
   workspaceId?: string;
   occurredAt: string;
+  /** Evidence/Identity Bridge (ADR-005) — forwarded by KnowledgeProcessor for processKnowledgeEvidence(); absent on events from before this change (older callers/tests), in which case the evidence path is a no-op. */
+  title?: string;
+  extractedFrameworks?: FrameworkExtractionResult;
+  extractedVocabulary?: VocabularyExtractionResult;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

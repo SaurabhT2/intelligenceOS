@@ -270,13 +270,64 @@ itself.
 
 ## 4. Pending schema migrations
 
-`schema.sql` now includes the `artifact_blueprints.degraded`/`.confidence_score` columns directly in its baseline `CREATE TABLE` statement (added in the Completion Mission session; there is no separate numbered migration file for this change — it was folded straight into the hand-maintained source-of-truth file, the same way most schema changes in this repository are made). It still shows `learnings.user_id UUID NOT NULL` and no `subject_type`/`workspace_id` columns on `hypotheses`/`signals`/`profiles`, and no `knowledge_summary`/`reasoning_summary`/`positioning_summary` columns on `profiles` either — the three separate migration files that exist, `002_workspace_learning_owner.sql`, `004_subject_centric_intelligence.sql`, and this update's new `005_cognitive_consolidation.sql`, have **not** been applied to any live database in this environment and have not been folded back into `schema.sql` itself — `005` deliberately follows `002`/`004`'s established precedent (migration file only) rather than introducing a third, inconsistent convention (see ADR-004 §6). (There is no `003` gap — `003_knowledge_assets_visual_features.sql` already occupies that number, from `ADR-001`'s implementation.)
+### Sixth session this update: Evidence/Identity Bridge (`ADR-005`, implemented)
+
+Runtime investigation traced a reported defect (knowledge ingestion succeeds; `identity` never
+synthesizes; `PromptCompiler` always reports `identity:NO`) to its root cause:
+`identitySynthesis.ts`'s `deriveIdentityContribution()` reads exclusively from promoted `Learning`
+rows in four taxonomy categories, and nothing in the codebase ever created a Hypothesis or
+Learning from a knowledge asset's extracted content — Knowledge reached `ProfileBuilder`'s
+descriptive `knowledgeSummary`/`vocabularySnapshot` fields directly, but never touched Stage 1 of
+the Learning Pipeline. See `docs/adr/ADR-005-evidence-identity-bridge.md` for the full decision
+record; summary of what changed:
+
+1. **New source-agnostic Stage 1 producer: `pipeline/EvidenceExtractor.ts`.** Takes a generic
+   `EvidenceSourceInput` envelope and applies an evidence-quality gate (confidence floor +
+   supporting-item recurrence) before emitting ordinary `Signal[]`. `EvidenceSourceKind` is an open
+   enum (`knowledge_asset | connector | web_import | repository | conversation | experience`) —
+   adding a future evidence origin is a new adapter file, not a change to this class.
+2. **First (and only Knowledge-specific) producer: `knowledge/KnowledgeAssetEvidenceAdapter.ts`.**
+   Converts extracted frameworks/vocabulary into evidence candidates for exactly the four taxonomy
+   categories `identitySynthesis.ts` reads, reusing extraction's own pre-existing
+   `taxonomyCategory` tagging. Explicitly never emits `competitive_intelligence` (`ADR-004` §0.1)
+   or non-identity vocabulary categories — those remain descriptive-only.
+3. **Every downstream stage — `ObservationBuilder`, `HypothesisEngine`, `LearningValidator`,
+   `ProfileBuilder` — is unchanged in its promotion-threshold math.** Knowledge-sourced Signals flow
+   through the identical Stage 2–6 pipeline every other source uses; `HypothesisEngine` matches
+   purely on `(subject, taxonomyCategory, contextScope)`, so knowledge evidence corroborates with
+   Experience-sourced observations in the same category automatically.
+4. **New, additive `hypotheses.evidence_trail jsonb` column** (`migrations/007_evidence_provenance.sql`)
+   — accumulates one `EvidenceRecord` (sourceKind/sourceId/sourceLabel/supportingItems/confidence/
+   disposition/observedAt) per Observation applied to a Hypothesis, copied into
+   `Learning.sourceSummary.evidenceTrail` on promotion. A synthesized fallback record is used for
+   pre-existing Experience-side Observations that don't supply one, so the trail is populated
+   uniformly across every source, not knowledge-only.
+5. **New `FeedbackProcessor.processKnowledgeEvidence()`**, wired onto the existing
+   `intelligence.signal.extracted` (`entityType: 'knowledge_asset'`) event alongside (not replacing)
+   the pre-existing `processKnowledgeExtraction()`.
+
+**Test/type/boundary status at end of this change:** 653/653 tests passing (627 pre-existing + 26
+new — `tests/unit/pipeline/EvidenceExtractor.test.ts`, `tests/unit/knowledge/
+KnowledgeAssetEvidenceAdapter.test.ts`, `tests/integration/ADR-005.knowledge-identity-bridge.
+integration.test.ts`; 3 existing Hypothesis test fixtures updated for the new required field).
+`pnpm -r typecheck` clean. No promotion-threshold constant changed anywhere in this session — a
+deliberate, verifiable design constraint of `ADR-005`, not just a claim.
+
+**Deliberately not attempted this session:** live-database application of migration 007 and
+live-server end-to-end validation (no Supabase/running-server access in this environment — see §4
+below, same constraint as every prior session); a second evidence producer (connector/web-import/
+repository/conversation) — the abstraction supports one but none was requested; exposing the new
+`evidence_trail`/`sourceSummary.evidenceTrail` data through a read-only API endpoint for
+UI-facing "why was this identity trait created" explainability — the data is fully persisted and
+inspectable directly today, but no route was requested or added.
+
+`schema.sql` now includes the `artifact_blueprints.degraded`/`.confidence_score` columns directly in its baseline `CREATE TABLE` statement (added in the Completion Mission session; there is no separate numbered migration file for this change — it was folded straight into the hand-maintained source-of-truth file, the same way most schema changes in this repository are made). It still shows `learnings.user_id UUID NOT NULL` and no `subject_type`/`workspace_id` columns on `hypotheses`/`signals`/`profiles`, no `knowledge_summary`/`reasoning_summary`/`positioning_summary` columns on `profiles`, and no `evidence_trail` column on `hypotheses` either — the migration files that exist, `002_workspace_learning_owner.sql`, `004_subject_centric_intelligence.sql`, `005_cognitive_consolidation.sql`, `006_visual_asset_type.sql`, and this update's new `007_evidence_provenance.sql`, have **not** been applied to any live database in this environment and have not been folded back into `schema.sql` itself.
 
 No live Supabase project is configured in this environment, so none of the following have been verified end-to-end — carried forward as still-required steps:
 
 | Step | Depends on |
 |---|---|
-| Apply `schema.sql` (including blueprint columns) + `migrations/002_workspace_learning_owner.sql` + `migrations/004_subject_centric_intelligence.sql` + `migrations/005_cognitive_consolidation.sql` to a real Supabase project | Supabase project access |
+| Apply `schema.sql` (including blueprint columns) + `migrations/002_workspace_learning_owner.sql` + `migrations/004_subject_centric_intelligence.sql` + `migrations/005_cognitive_consolidation.sql` + `migrations/006_visual_asset_type.sql` + `migrations/007_evidence_provenance.sql` to a real Supabase project | Supabase project access |
 | Confirm `reviewLearning`/`reviewLearningForWorkspace` persist correctly against a live database | Above |
 | Confirm two users in the same workspace share workspace-scoped learnings in an assembled blueprint | Above |
 | Confirm `getBrandSummary` / `summarizeCognition` return correct counts against real data | Above |

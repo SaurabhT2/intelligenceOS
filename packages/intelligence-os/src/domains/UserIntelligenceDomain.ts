@@ -133,6 +133,8 @@ interface HypothesisRow {
   context_artifact_type: string | null;
   promoted_learning_id: string | null;
   expires_at: string | null;
+  /** Evidence/Identity Bridge (ADR-005), migration 007. Absent on rows from before the migration ran — mapToHypothesis defaults to []. */
+  evidence_trail?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -238,6 +240,7 @@ function mapToHypothesis(row: HypothesisRow): Hypothesis {
     contextArtifactType: row.context_artifact_type,
     promotedLearningId: row.promoted_learning_id,
     expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+    evidenceTrail: Array.isArray(row.evidence_trail) ? (row.evidence_trail as Hypothesis['evidenceTrail']) : [],
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };

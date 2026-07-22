@@ -12,7 +12,7 @@
  * Source: BrandOS Intelligence Contracts B.2.
  */
 
-import type { TaxonomyCategory, StabilityClass } from '../types/entities';
+import type { TaxonomyCategory, StabilityClass, EvidenceRecord } from '../types/entities';
 import type { DomainType } from '../types/domains';
 import type { SubjectRef, SubjectType } from '../types/subject';
 
@@ -69,6 +69,18 @@ export interface Observation {
   content: Record<string, unknown>;
   /** Context flags forwarded from the source Signal. */
   contextFlags: string[];
+  /**
+   * Evidence/Identity Bridge (ADR-005) — optional structured provenance for
+   * this Observation, carried through from `Signal.rawContent.provenance`
+   * when the producing extractor supplied one (currently:
+   * `EvidenceExtractor`, for Knowledge-sourced signals). `undefined` for
+   * Observations built by `SignalExtractor.extractFromFeedback`/
+   * `extractFromObservation` — `HypothesisEngine` synthesizes a minimal
+   * fallback record from the Observation's own fields in that case, so
+   * every Hypothesis's `evidence_trail` stays populated regardless of
+   * source, without requiring every existing extractor to be rewritten.
+   */
+  evidence?: EvidenceRecord;
   createdAt: Date;
 }
 
