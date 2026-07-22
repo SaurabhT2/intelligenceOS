@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm context:generate && pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:coverage": "pnpm -r test:coverage",
@@ -11,7 +11,12 @@
     "validate": "pnpm -r typecheck && pnpm --filter @intelligence-os/core check:boundaries && pnpm lint",
     "dev:api": "pnpm --filter @intelligence-os/api dev",
     "demo": "pnpm --filter @intelligence-os/demo start",
-    "clean": "pnpm -r clean"
+    "clean": "pnpm -r clean",
+    "context:generate": "node scripts/context/generate-consolidated.mjs",
+    "context:refresh": "node scripts/context/generate-consolidated.mjs",
+    "context:check": "node scripts/context/generate-consolidated.mjs && git diff --exit-code .context",
+    "trace": "node scripts/context/trace.mjs",
+    "impact": "node scripts/context/impact.mjs"
   },
    "engines": {
     "node": ">=22.0.0"
