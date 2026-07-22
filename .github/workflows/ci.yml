@@ -38,5 +38,12 @@ jobs:
       - name: Validate (typecheck + boundary check + lint)
         run: pnpm validate
 
+      - name: Context drift check (architecture.generated.{md,json} must match source)
+        # Assumes .context/*.generated.* is committed to the repo. Regenerates
+        # from current source and fails if the committed files don't match —
+        # the same guarantee `pnpm build` gives locally (it runs
+        # `context:generate` before the workspace build), enforced on PRs too.
+        run: pnpm context:check
+
       - name: Test
         run: pnpm test
