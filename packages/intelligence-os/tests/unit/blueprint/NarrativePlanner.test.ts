@@ -101,7 +101,7 @@ const ASSET_WITH_VOCAB: KnowledgeAsset = {
   extractedVocabulary: { proprietaryTerms: ['RevRide™', 'ChurnGuard'], forbiddenTerms: [] },
   extractedPatterns:   null,
   extractedFrameworks: null,
-  extractedVisualFeatures: null,
+  extractedVisualFeatures: null, contributionSummary: null,
   confidence:          0.9,
   version:             1,
   isCurrent:           true,

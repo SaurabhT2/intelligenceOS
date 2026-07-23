@@ -38,7 +38,7 @@ function makeKnowledgeAsset(overrides: Partial<KnowledgeAsset> = {}): KnowledgeA
     id: 'asset-1', ownerType: 'workspace', userId: null, projectId: null, workspaceId: 'ws-1',
     assetType: 'reference', title: 'Strategy doc', sourceFileRef: null,
     extractedVocabulary: null, extractedPatterns: null, extractedFrameworks: null,
-    extractedVisualFeatures: null, confidence: 0.9, version: 1, isCurrent: true,
+    extractedVisualFeatures: null, contributionSummary: null, confidence: 0.9, version: 1, isCurrent: true,
     createdAt: new Date('2026-02-01T00:00:00Z'), updatedAt: new Date('2026-02-01T00:00:00Z'),
     ...overrides,
   };

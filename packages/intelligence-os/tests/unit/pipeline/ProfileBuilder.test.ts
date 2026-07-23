@@ -401,3 +401,83 @@ describe('ProfileBuilder — versioning and event emission', () => {
     expect(profile.archetypeConfidence).toBe(0.8);
   });
 });
+
+describe('ProfileBuilder — G-31 cold-start concurrency guard', () => {
+  // Reproduces the production trace this fix addresses: several knowledge
+  // assets finish extraction for a brand-new workspace at nearly the same
+  // moment (getCurrentProfileForSubject resolves null for all of them),
+  // and each independently calls rebuildForSubject(). Before G-31 this was
+  // a straight race at the upsertProfile() unique-constraint layer; after
+  // G-31, only one physical rebuild ever runs per Subject at a time.
+
+  it('coalesces N concurrent rebuildForSubject() calls for the same Subject into a single upsertProfile() write', async () => {
+    const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: null });
+    const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+    const subject = workspaceSubject('ws-cold-start');
+
+    // Four "simultaneous" triggers — the same shape as four PDFs finishing
+    // KnowledgeProcessor.process() within milliseconds of each other.
+    const results = await Promise.all([
+      builder.rebuildForSubject(subject, ['knowledge']),
+      builder.rebuildForSubject(subject, ['knowledge']),
+      builder.rebuildForSubject(subject, ['knowledge']),
+      builder.rebuildForSubject(subject, ['knowledge']),
+    ]);
+
+    // Exactly one underlying write — no version-conflict race is even
+    // possible, because there was only ever one INSERT attempt.
+    expect(userDomain.upsertProfile).toHaveBeenCalledTimes(1);
+    // Every caller still receives a resolved profile — no caller is left
+    // to fail or silently receive nothing.
+    for (const profile of results) {
+      expect(profile).toBeDefined();
+      expect(profile.subjectType).toBe('workspace');
+    }
+  });
+
+  it('removes the Subject from the in-flight map once the rebuild settles, so a later call starts a fresh rebuild', async () => {
+    const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: null });
+    const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+    const subject = userSubject('user-cold-start');
+
+    await builder.rebuildForSubject(subject);
+    await builder.rebuildForSubject(subject);
+
+    // Two calls that do not overlap in time are two independent rebuilds,
+    // not incorrectly coalesced forever.
+    expect(userDomain.upsertProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('shouldRebuildForSubjectFromKnowledge declines and schedules a trailing rebuild when one is already in flight', async () => {
+    const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: null });
+    const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+    const subject = workspaceSubject('ws-cold-start-2');
+
+    vi.useFakeTimers();
+    try {
+      // Start (but do not await) a rebuild — leaves it in flight.
+      const inFlight = builder.rebuildForSubject(subject, ['knowledge']);
+
+      const decision = await builder.shouldRebuildForSubjectFromKnowledge(subject, 'asset-2');
+      expect(decision.shouldRebuild).toBe(false);
+      expect(decision.reason).toContain('already in flight or scheduled');
+
+      await inFlight;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shouldRebuildForSubject (Learning-triggered) declines when a rebuild is already in flight', async () => {
+    const { userDomain, knowledgeDomain } = makeDomains({ currentProfile: null });
+    const builder = new ProfileBuilder(userDomain, new InProcessEventBus(), knowledgeDomain);
+
+    const inFlight = builder.rebuildForSubject(userSubject('user-1'));
+
+    const decision = await builder.shouldRebuild('user-1', makeLearning());
+    expect(decision.shouldRebuild).toBe(false);
+    expect(decision.reason).toContain('already in flight');
+
+    await inFlight;
+  });
+});

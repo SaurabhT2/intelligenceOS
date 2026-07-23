@@ -254,6 +254,32 @@ export class IntelligenceOS implements IIntelligenceProvider {
   }
 
   /**
+   * Cognitive Platform Evolution Program — Knowledge Lifecycle Completion,
+   * Objective 2 (reframed). Fetches the `contributionSummary` this
+   * ingestion produced (`ContributionScorer.ts`), for the HTTP layer
+   * (`api/http/server.ts`'s optional `KnowledgeIngestPort.getKnowledgeAssetContribution`)
+   * to return alongside `assetId` from `POST /v1/knowledge/ingest`.
+   *
+   * Deliberately a separate method rather than widening
+   * `ingestKnowledgeAsset()`'s own `Promise<string>` return type: that
+   * signature is part of `IIntelligenceProvider`, the in-process contract
+   * every consumer of this class (not only the HTTP layer) depends on,
+   * and changing it would ripple beyond this feature's actual scope. A
+   * DB read here (rather than threading the KnowledgeProcessor result
+   * through `bus.emit()`, which is fire-and-forget-shaped and not built
+   * to return handler results to the emitter) is safe specifically
+   * because `ingestKnowledgeAsset()` `await`s the emit above, and
+   * `InProcessEventBus` awaits every registered listener before
+   * resolving — so by the time this method's caller has an `assetId` to
+   * pass in, `KnowledgeProcessor.process()` has already persisted the row
+   * this reads.
+   */
+  async getKnowledgeAssetContribution(assetId: string): Promise<Record<string, unknown> | null> {
+    const asset = await this.domains.knowledge.getAssetById(assetId);
+    return asset?.contributionSummary ?? null;
+  }
+
+  /**
    * ADR-003 (Subject-Centric Intelligence) §2.4 — ingests explicit,
    * admin-declared workspace configuration (a persona/brand-voice
    * override, identity declarations, compliance requirements) as

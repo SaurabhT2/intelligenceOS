@@ -50,6 +50,7 @@ interface KnowledgeAssetRow {
   extracted_patterns: Record<string, unknown> | null;
   extracted_frameworks: Record<string, unknown> | null;
   extracted_visual_features: Record<string, unknown> | null;
+  contribution_summary: Record<string, unknown> | null;
   confidence: number;
   version: number;
   is_current: boolean;
@@ -76,6 +77,7 @@ export interface KnowledgeAssetUpsertInput {
   extractedFrameworks: Record<string, unknown> | null;
   extractedPatterns: Record<string, unknown> | null;
   extractedVisualFeatures: Record<string, unknown> | null;
+  contributionSummary: Record<string, unknown> | null;
   confidence: number;
   version: number;
   isCurrent: boolean;
@@ -97,6 +99,7 @@ function mapToKnowledgeAsset(row: KnowledgeAssetRow): KnowledgeAsset {
     extractedPatterns: row.extracted_patterns,
     extractedFrameworks: row.extracted_frameworks,
     extractedVisualFeatures: row.extracted_visual_features ?? null,
+    contributionSummary: row.contribution_summary ?? null,
     confidence: row.confidence,
     version: row.version,
     isCurrent: row.is_current,
@@ -222,6 +225,7 @@ export class KnowledgeIntelligenceDomain {
       extracted_frameworks:      input.extractedFrameworks,
       extracted_patterns:        input.extractedPatterns,
       extracted_visual_features: input.extractedVisualFeatures,
+      contribution_summary:      input.contributionSummary,
       confidence:                input.confidence,
       version:                   input.version,
       is_current:                input.isCurrent,
@@ -296,6 +300,10 @@ export class KnowledgeIntelligenceDomain {
       extractedFrameworks,
       extractedPatterns: null,
       extractedVisualFeatures: null,
+      // Not a document ingestion — an explicit admin declaration has no
+      // "how much did this document add" question to answer; ContributionScorer
+      // is specific to the extraction pipeline this method deliberately bypasses.
+      contributionSummary: null,
       confidence: 1.0,
       version: (currentConfig?.version ?? 0) + 1,
       isCurrent: true,

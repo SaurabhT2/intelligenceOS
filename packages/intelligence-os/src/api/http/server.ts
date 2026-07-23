@@ -16,7 +16,9 @@
  * Plus one Milestone 3, Phase 1 route (Knowledge API), only active when a
  * `KnowledgeIngestPort` is supplied to `createCognitionHttpServer`:
  *
- *   POST /v1/knowledge/ingest   { asset: KnowledgeAssetInput, rawContent?, existingAssetId? } -> { assetId }
+ *   POST /v1/knowledge/ingest   { asset: KnowledgeAssetInput, rawContent?, existingAssetId? } -> { assetId, contribution }
+ *     (`contribution` is additive — null if the KnowledgeIngestPort implementation
+ *     doesn't supply getKnowledgeAssetContribution, or if that lookup fails)
  *
  * Plus one Completion Mission route, only active when the supplied
  * `KnowledgeIngestPort` implements `ingestWorkspaceConfiguration` (ADR-003
@@ -113,6 +115,18 @@ export interface KnowledgeIngestPort {
     rawContent?: string,
     existingAssetId?: string,
   ): Promise<string>;
+  /**
+   * Cognitive Platform Evolution Program — Knowledge Lifecycle Completion,
+   * Objective 2 (reframed). Optional, same reasoning as every other
+   * optional member on this port: every existing caller of
+   * `createCognitionHttpServer` (constructed before this member existed)
+   * keeps compiling and working unchanged. When present, the ingest
+   * handler below calls it right after `ingestKnowledgeAsset` resolves
+   * and merges the result into the JSON response as an additive
+   * `contribution` field — `assetId` alone is still always returned, so
+   * this is a strictly additive change to the wire contract.
+   */
+  getKnowledgeAssetContribution?(assetId: string): Promise<Record<string, unknown> | null>;
   /**
    * ADR-003 §2.4 — optional so every existing caller of
    * `createCognitionHttpServer` keeps compiling unchanged, exactly like
@@ -291,12 +305,26 @@ export function createCognitionHttpServer(
           body.rawContent,
           body.existingAssetId,
         );
+
+        // Additive — see KnowledgeIngestPort.getKnowledgeAssetContribution's
+        // docblock. A failure here must not fail an otherwise-successful
+        // ingest; the response simply omits `contribution` in that case.
+        let contribution: Record<string, unknown> | null = null;
+        if (knowledge.getKnowledgeAssetContribution) {
+          try {
+            contribution = await knowledge.getKnowledgeAssetContribution(assetId);
+          } catch (err) {
+            logger.warn('[cognition-http] getKnowledgeAssetContribution failed (non-fatal):', { assetId, err });
+          }
+        }
+
         logger.info('[cognition-http] POST /v1/knowledge/ingest complete:', {
           status: 201,
           assetId,
+          contributionScore: contribution && typeof contribution['score'] === 'number' ? contribution['score'] : null,
           durationMs: Date.now() - receivedAt,
         });
-        sendJson(res, 201, { assetId });
+        sendJson(res, 201, { assetId, contribution });
         return;
       }
 

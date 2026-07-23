@@ -397,6 +397,16 @@ export interface KnowledgeAsset {
    *           ADD COLUMN IF NOT EXISTS extracted_visual_features JSONB;
    */
   extractedVisualFeatures: Record<string, unknown> | null;
+  /**
+   * How much this ingestion expanded the workspace's knowledge surface —
+   * see knowledge/types.ts's ContributionSummary for the shape and
+   * knowledge/ContributionScorer.ts for how it's computed. Descriptive
+   * only; never gates or is gated by the Evidence/Identity Bridge
+   * (ADR-005). Null for assets processed before this field existed.
+   * Schema: ALTER TABLE intelligence.knowledge_assets
+   *           ADD COLUMN IF NOT EXISTS contribution_summary JSONB;
+   */
+  contributionSummary: Record<string, unknown> | null;
   confidence: number;
   version: number;
   isCurrent: boolean;

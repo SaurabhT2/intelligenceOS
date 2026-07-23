@@ -165,7 +165,7 @@ describe('KnowledgeValidator', () => {
       extractedVocabulary: null,
       extractedPatterns: null,
       extractedFrameworks: null,
-      extractedVisualFeatures: null,
+      extractedVisualFeatures: null, contributionSummary: null,
       confidence: 0.80,
       version: 1,
       isCurrent: true,
@@ -197,7 +197,7 @@ describe('KnowledgeValidator', () => {
       extractedVocabulary: null,
       extractedPatterns: null,
       extractedFrameworks: null,
-      extractedVisualFeatures: null,
+      extractedVisualFeatures: null, contributionSummary: null,
       confidence: 0.80,
       version: 1,
       isCurrent: true,
@@ -229,7 +229,7 @@ describe('KnowledgeValidator', () => {
       },
       extractedPatterns: null,
       extractedFrameworks: null,
-      extractedVisualFeatures: null,
+      extractedVisualFeatures: null, contributionSummary: null,
       confidence: 0.75,
       version: 1,
       isCurrent: true,
@@ -549,7 +549,7 @@ describe('KnowledgeProcessor — G-21 structured logging', () => {
     )!;
     expect(payload.stageOutcomes).toEqual({
       extract: 'pass', vocabulary: 'pass', framework: 'pass',
-      pattern: 'pass', visual: 'pass', validation: 'pass', persist: 'pass',
+      pattern: 'pass', visual: 'pass', validation: 'pass', contribution: 'pass', persist: 'pass',
     });
   });
 
