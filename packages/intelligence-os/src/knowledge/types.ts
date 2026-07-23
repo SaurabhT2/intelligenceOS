@@ -171,6 +171,46 @@ export interface PatternExtractionResult {
   patternCount: number;
 }
 
+// ── Contribution ─────────────────────────────────────────────────────────────
+// Output of ContributionScorer (Objective 2, reframed per architecture review
+// of 2026-07-23 — see docs/handoffs/ for the decision record).
+//
+// Deliberately descriptive, not evidentiary: this is a readout of what THIS
+// ingestion added to the workspace's raw knowledge surface (new vocabulary,
+// frameworks, patterns; how much of it overlapped with what was already
+// known), computed entirely from KnowledgeValidator/Vocabulary/Framework/
+// PatternExtractor output that already exists by the time Stage 5 finishes.
+// It never reads or writes Hypotheses, Learnings, or the Identity Bridge
+// (ADR-005) — a document can score highly here (rich, novel content) while
+// still contributing nothing to identity yet, if its content doesn't clear
+// KnowledgeAssetEvidenceAdapter's corroboration gate. That is correct, not a
+// bug: contribution answers "how much did the workspace's knowledge surface
+// grow", identity/confidence answers "how much do we trust an opinion",
+// and ADR-005 is explicit that the second question must not be answerable
+// by a single document alone.
+export interface ContributionSummary {
+  /** 0–100. See ContributionScorer.ts for the weighting. */
+  score: number;
+  /** True if KnowledgeValidator matched this asset to an existing one by title similarity. */
+  isDuplicate: boolean;
+  duplicateAssetId: string | null;
+  /**
+   * 1 − corroborationScore: the fraction of this asset's vocabulary that
+   * was NOT already present in existing current assets. 1.0 = entirely new
+   * terminology, 0.0 = fully overlapping with what the workspace already
+   * has (a near-duplicate in substance even if titleSimilarity didn't
+   * flag it as a duplicate asset outright).
+   */
+  noveltyRatio: number;
+  /** Raw corroborationScore this was derived from, carried through for explainability. */
+  corroborationScore: number;
+  termCount: number;
+  frameworkCount: number;
+  patternCount: number;
+  /** Human-readable explanation of the score — surfaced to the UI and logs. See Objective 5. */
+  reasons: string[];
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 // Output of KnowledgeValidator.
 
@@ -209,12 +249,14 @@ export interface KnowledgeProcessorResult {
   visualResult: import('../knowledge/VisualFeatureExtractor').VisualFeatureExtractionResult | null;
   /** Validation result. */
   validationResult: ValidationResult;
+  /** How much this ingestion expanded the workspace's knowledge surface. See ContributionSummary. */
+  contribution: ContributionSummary;
   /** Non-fatal errors encountered during processing. */
   errors: KnowledgeStageError[];
 }
 
 export interface KnowledgeStageError {
-  stage: 'extract' | 'vocabulary' | 'framework' | 'pattern' | 'visual' | 'validation' | 'persist';
+  stage: 'extract' | 'vocabulary' | 'framework' | 'pattern' | 'visual' | 'validation' | 'contribution' | 'persist';
   message: string;
   cause?: unknown;
 }

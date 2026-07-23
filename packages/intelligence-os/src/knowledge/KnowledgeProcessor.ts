@@ -45,6 +45,7 @@ import type {
   KnowledgeProcessorResult,
   KnowledgeStageError,
   KnowledgeAssetLifecycleState,
+  ContributionSummary,
 } from './types';
 import type { VisualFeatureExtractionResult } from './VisualFeatureExtractor';
 
@@ -54,6 +55,7 @@ import { FrameworkExtractor } from './FrameworkExtractor';
 import { PatternExtractor } from './PatternExtractor';
 import { VisualFeatureExtractor } from './VisualFeatureExtractor';
 import { KnowledgeValidator } from './KnowledgeValidator';
+import { computeContribution } from './ContributionScorer';
 
 // ── KnowledgeProcessor ────────────────────────────────────────────────────────
 
@@ -197,7 +199,26 @@ export class KnowledgeProcessor {
       };
     }
 
-    // ── Stage 6: Persist ──────────────────────────────────────────────────
+    // ── Stage 6: Contribution scoring ───────────────────────────────────────
+    // Purely descriptive (see ContributionScorer.ts's header) — computed
+    // entirely from the extraction/validation results above, never touches
+    // the evidence/trust pipeline. A failure here must not fail extraction,
+    // same discipline as every other non-fatal stage.
+
+    let contribution;
+    try {
+      contribution = computeContribution(vocabularyResult, frameworkResult, patternResult, validationResult);
+    } catch (err) {
+      errors.push(stageError('contribution', 'Contribution scoring failed', err));
+      contribution = {
+        score: 0, isDuplicate: validationResult.isDuplicate, duplicateAssetId: validationResult.duplicateAssetId,
+        noveltyRatio: 0, corroborationScore: validationResult.corroborationScore,
+        termCount: vocabularyResult.termCount, frameworkCount: frameworkResult.frameworkCount,
+        patternCount: patternResult.patternCount, reasons: ['Contribution scoring stage failed; reported as 0.'],
+      };
+    }
+
+    // ── Stage 7: Persist ──────────────────────────────────────────────────
 
     const lifecycleState: KnowledgeAssetLifecycleState =
       validationResult.passed ? 'ACTIVE' : 'EXTRACTED';
@@ -206,12 +227,12 @@ export class KnowledgeProcessor {
     try {
       persistedAsset = await this.persistAsset(
         job, vocabularyResult, frameworkResult, patternResult,
-        visualResult, validationResult.confidence, lifecycleState,
+        visualResult, validationResult.confidence, lifecycleState, contribution,
       );
     } catch (err) {
       errors.push(stageError('persist', 'Asset persistence failed', err));
       persistedAsset = buildSyntheticAsset(
-        job, vocabularyResult, frameworkResult, patternResult, visualResult, validationResult.confidence,
+        job, vocabularyResult, frameworkResult, patternResult, visualResult, validationResult.confidence, contribution,
       );
     }
 
@@ -266,15 +287,21 @@ export class KnowledgeProcessor {
     try {
       const failedStages = new Set(errors.map((e) => e.stage));
       const stageOutcomes: Record<string, 'pass' | 'fail'> = {
-        extract:    failedStages.has('extract')    ? 'fail' : 'pass',
-        vocabulary: failedStages.has('vocabulary') ? 'fail' : 'pass',
-        framework:  failedStages.has('framework')  ? 'fail' : 'pass',
-        pattern:    failedStages.has('pattern')    ? 'fail' : 'pass',
-        visual:     failedStages.has('visual')     ? 'fail' : 'pass',
-        validation: failedStages.has('validation') ? 'fail' : 'pass',
-        persist:    failedStages.has('persist')    ? 'fail' : 'pass',
+        extract:      failedStages.has('extract')      ? 'fail' : 'pass',
+        vocabulary:   failedStages.has('vocabulary')   ? 'fail' : 'pass',
+        framework:    failedStages.has('framework')    ? 'fail' : 'pass',
+        pattern:      failedStages.has('pattern')      ? 'fail' : 'pass',
+        visual:       failedStages.has('visual')       ? 'fail' : 'pass',
+        validation:   failedStages.has('validation')   ? 'fail' : 'pass',
+        contribution: failedStages.has('contribution') ? 'fail' : 'pass',
+        persist:      failedStages.has('persist')      ? 'fail' : 'pass',
       };
 
+      // G-31/Objective 5 — the point of this line is explaining WHY, not
+      // just confirming THAT extraction happened: contribution.reasons is
+      // the human-readable trail (novelty vs. overlap, duplicate match,
+      // volume) that produced contribution.score, logged alongside it
+      // rather than the bare number alone.
       this.logger.info('[KnowledgeProcessor] process() complete:', {
         assetId,
         lifecycleState,
@@ -285,6 +312,8 @@ export class KnowledgeProcessor {
         frameworkCount: frameworkResult.frameworkCount,
         patternCount:  patternResult.patternCount,
         isVisualAsset: visualResult?.isVisualAsset ?? false,
+        contributionScore: contribution.score,
+        contributionReasons: contribution.reasons,
         errorCount:    errors.length,
       });
     } catch {
@@ -300,6 +329,7 @@ export class KnowledgeProcessor {
       patternResult,
       visualResult,
       validationResult,
+      contribution,
       errors,
     };
   }
@@ -314,6 +344,7 @@ export class KnowledgeProcessor {
     visual:     VisualFeatureExtractionResult | null,
     confidence: number,
     lifecycleState: KnowledgeAssetLifecycleState,
+    contribution: ContributionSummary,
   ): Promise<KnowledgeAsset> {
     return this.knowledgeDomain.persistExtracted({
       id:                       job.assetId,
@@ -328,6 +359,7 @@ export class KnowledgeProcessor {
       extractedFrameworks:      frameworks as unknown as Record<string, unknown>,
       extractedPatterns:        patterns   as unknown as Record<string, unknown>,
       extractedVisualFeatures:  visual     as unknown as Record<string, unknown> | null,
+      contributionSummary:      contribution as unknown as Record<string, unknown>,
       confidence,
       version:                  1,
       // Completion Mission (RCA finding — compounding factor on the
@@ -364,7 +396,7 @@ function failedResult(
       id: assetId, ownerType: 'user', userId: null, projectId: null, workspaceId: null,
       assetType: 'reference', title: '', sourceFileRef: null,
       extractedVocabulary: null, extractedPatterns: null, extractedFrameworks: null,
-      extractedVisualFeatures: null,
+      extractedVisualFeatures: null, contributionSummary: null,
       confidence: 0, version: 1, isCurrent: false,
       createdAt: now, updatedAt: now,
     },
@@ -373,6 +405,11 @@ function failedResult(
     patternResult:     { patterns: [], patternCount: 0 },
     visualResult:      null,
     validationResult:  { confidence: 0, isDuplicate: false, duplicateAssetId: null, corroborationScore: 0, warnings: [], passed: false },
+    contribution: {
+      score: 0, isDuplicate: false, duplicateAssetId: null, noveltyRatio: 0, corroborationScore: 0,
+      termCount: 0, frameworkCount: 0, patternCount: 0,
+      reasons: ['Extraction failed before contribution could be assessed.'],
+    },
     errors,
   };
 }
@@ -384,6 +421,7 @@ function buildSyntheticAsset(
   patterns:   import('./types').PatternExtractionResult,
   visual:     VisualFeatureExtractionResult | null,
   confidence: number,
+  contribution: ContributionSummary,
 ): KnowledgeAsset {
   const now = new Date();
   return {
@@ -399,6 +437,7 @@ function buildSyntheticAsset(
     extractedFrameworks:     frameworks as unknown as Record<string, unknown>,
     extractedPatterns:       patterns   as unknown as Record<string, unknown>,
     extractedVisualFeatures: visual     as unknown as Record<string, unknown> | null,
+    contributionSummary:     contribution as unknown as Record<string, unknown>,
     confidence,
     version:                 1,
     isCurrent:               true,

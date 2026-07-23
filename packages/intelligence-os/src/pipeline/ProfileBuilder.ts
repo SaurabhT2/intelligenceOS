@@ -141,6 +141,39 @@ export class ProfileBuilder {
    */
   private readonly pendingKnowledgeRebuilds = new Map<string, ReturnType<typeof setTimeout>>();
 
+  /**
+   * G-31 (Cognitive Platform Evolution Program — Knowledge Lifecycle
+   * Completion) — the actual concurrency guard for `rebuildForSubject()`,
+   * keyed the same way `pendingKnowledgeRebuilds` is. `upsertProfile()`'s
+   * retry-on-`ProfileVersionConflictError` loop (3 attempts) was already
+   * correct for the case it was designed for — an occasional race between
+   * two independent triggers — but had no protection at all for a cold
+   * start: `shouldRebuildForSubjectFromKnowledge()` and
+   * `shouldRebuildForSubject()` both return `shouldRebuild: true`
+   * unconditionally when `currentProfile` is null (correctly — the very
+   * first rebuild for a Subject has nothing to debounce against), so a
+   * burst of several knowledge assets finishing extraction for a
+   * brand-new workspace each independently start their own synchronous
+   * `rebuildForSubject()` call. That is a genuine thundering herd, not an
+   * occasional race — 4 concurrent first-rebuild attempts routinely
+   * exhausts a 3-attempt retry budget, surfacing as an uncaught
+   * `ProfileVersionConflictError` and leaving the Subject with **no**
+   * profile at all, silently, until the next unrelated trigger happens to
+   * succeed.
+   *
+   * The fix is a real mutex, not a bigger retry budget: at most one
+   * physical `rebuildForSubject()` call is ever in flight per Subject.
+   * Every concurrent caller — regardless of which trigger invoked it —
+   * joins the same in-flight Promise and receives its result, rather than
+   * racing to write a second "current" row. The DB-level unique
+   * constraint + retry loop in `upsertProfile()`/`rebuildForSubject()`
+   * remains as-is beneath this: it is still the correct backstop for a
+   * multi-process deployment (this map, like `pendingKnowledgeRebuilds`,
+   * is in-process only — see that field's own docblock), it just stops
+   * being the *only* protection for the common single-process case.
+   */
+  private readonly inFlightRebuilds = new Map<string, Promise<IntelligenceProfile>>();
+
   constructor(
     private readonly userDomain: UserIntelligenceDomain,
     private readonly bus: IntelligenceEventBus,
@@ -150,6 +183,11 @@ export class ProfileBuilder {
 
   private subjectKey(subject: SubjectRef): string {
     return `${subject.subjectType}:${subject.subjectId}`;
+  }
+
+  /** G-31 — whether `rebuildForSubject()` currently has an in-flight call for this Subject. */
+  private inFlightRebuildExists(subject: SubjectRef): boolean {
+    return this.inFlightRebuilds.has(this.subjectKey(subject));
   }
 
   /**
@@ -245,6 +283,26 @@ export class ProfileBuilder {
       };
     }
 
+    // G-31 — same cold-start thundering-herd guard as
+    // shouldRebuildForSubjectFromKnowledge(). This path has no existing
+    // trailing-rebuild scheduler of its own (only the Knowledge-triggered
+    // path does, per G-7), so a caller that finds a rebuild already in
+    // flight simply declines rather than also scheduling a catch-up
+    // rebuild — the joined caller of the in-flight rebuild in
+    // rebuildForSubject() still gets a correct (if possibly
+    // slightly-stale-by-one-Learning) profile, consistent with this
+    // method's own pre-existing debounce/staleness tolerance below.
+    // Building a Learning-side trailing scheduler mirroring G-7's is real
+    // future work if this residual gap proves to matter in practice — see
+    // this PR's handoff doc.
+    if (this.inFlightRebuildExists(subject)) {
+      return {
+        shouldRebuild: false,
+        reason: 'A rebuild is already in flight for this Subject; its result will reflect the current Learning set (G-31)',
+        newLearningsCount: 0,
+      };
+    }
+
     // Count high-confidence learnings created since last profile update
     const currentProfile = await this.userDomain.getCurrentProfileForSubject(subject);
 
@@ -311,6 +369,26 @@ export class ProfileBuilder {
     subject: SubjectRef,
     changedKnowledgeAssetId: string,
   ): Promise<RebuildDecision> {
+    // G-31 — checked before the no-profile branch below specifically
+    // because that branch is the one with no time-based debounce to fall
+    // back on: every caller that sees `currentProfile === null` would
+    // otherwise return `shouldRebuild: true` unconditionally, which is
+    // exactly the cold-start thundering herd `inFlightRebuilds` exists to
+    // prevent. A caller that finds a rebuild already in flight schedules
+    // the same G-7 trailing rebuild a debounced (post-cold-start) caller
+    // would — so if this particular knowledge asset's write happened not
+    // to be visible to the in-flight rebuild's own read, it is still
+    // picked up once that trailing timer fires, rather than silently
+    // dropped until some unrelated future trigger.
+    if (this.pendingKnowledgeRebuilds.has(this.subjectKey(subject)) || this.inFlightRebuildExists(subject)) {
+      this.scheduleTrailingKnowledgeRebuild(subject);
+      return {
+        shouldRebuild: false,
+        reason: `A rebuild is already in flight or scheduled for this Subject (triggered by knowledge asset ${changedKnowledgeAssetId}); a trailing rebuild is scheduled to pick up this asset once the in-flight one completes (G-31)`,
+        newLearningsCount: 0,
+      };
+    }
+
     const currentProfile = await this.userDomain.getCurrentProfileForSubject(subject);
 
     if (!currentProfile) {
@@ -378,6 +456,37 @@ export class ProfileBuilder {
    * User's does (ADR-003 §2.3 — no separate WorkspaceProfile table).
    */
   async rebuildForSubject(subject: SubjectRef, changedDomains: string[] = []): Promise<IntelligenceProfile> {
+    // G-31 — join an already-in-flight rebuild for this Subject rather
+    // than starting a second one. This is the actual fix for the
+    // cold-start thundering herd documented on `inFlightRebuilds`'s own
+    // docblock: whichever caller arrives second (third, fourth...) simply
+    // awaits the first caller's Promise instead of racing it at the DB
+    // layer. A joiner's `changedDomains` is intentionally not merged into
+    // the in-flight call — the summaries it computes are read fresh from
+    // `userDomain`/`knowledgeDomain` regardless of which domain changed,
+    // so every joiner gets a profile that reflects (at least) its own
+    // trigger's data as long as that write committed before the in-flight
+    // call's own read did. See the docblock for the residual ordering
+    // edge case this does not (and, per G-7's own precedent, does not
+    // need to) eliminate.
+    const key = this.subjectKey(subject);
+    const inFlight = this.inFlightRebuilds.get(key);
+    if (inFlight) return inFlight;
+
+    const promise = this.performRebuildForSubject(subject, changedDomains).finally(() => {
+      this.inFlightRebuilds.delete(key);
+    });
+    this.inFlightRebuilds.set(key, promise);
+    return promise;
+  }
+
+  /**
+   * The actual rebuild work, unchanged from before G-31 except for being
+   * split out of `rebuildForSubject()` so that method could add the
+   * in-flight join above it. Never call this directly — always go through
+   * `rebuildForSubject()` so the mutex applies.
+   */
+  private async performRebuildForSubject(subject: SubjectRef, changedDomains: string[] = []): Promise<IntelligenceProfile> {
     // G-7 — this rebuild (whatever triggered it) makes the profile current
     // again, so any deferred trailing rebuild still pending for this
     // Subject would now be redundant.

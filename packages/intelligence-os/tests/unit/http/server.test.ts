@@ -296,8 +296,44 @@ describe('createCognitionHttpServer', () => {
         body: JSON.stringify(body),
       });
       expect(res.status).toBe(201);
-      expect(await res.json()).toEqual({ assetId: 'asset-known-1' });
+      // contribution is additive — null when the supplied KnowledgeIngestPort
+      // (like this one) doesn't implement getKnowledgeAssetContribution.
+      expect(await res.json()).toEqual({ assetId: 'asset-known-1', contribution: null });
       expect(ingestKnowledgeAsset).toHaveBeenCalledWith(body.asset, body.rawContent, undefined);
+    });
+
+    it('includes contribution in the response when the port implements getKnowledgeAssetContribution', async () => {
+      const ingestKnowledgeAsset = vi.fn().mockResolvedValue('asset-known-2');
+      const getKnowledgeAssetContribution = vi.fn().mockResolvedValue({ score: 71, isDuplicate: false });
+      await start(makeMockProvider(), { ingestKnowledgeAsset, getKnowledgeAssetContribution });
+      const body = {
+        asset: { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Doc' },
+        rawContent: 'some real content',
+      };
+      const res = await fetch(`${baseUrl}/v1/knowledge/ingest`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ assetId: 'asset-known-2', contribution: { score: 71, isDuplicate: false } });
+      expect(getKnowledgeAssetContribution).toHaveBeenCalledWith('asset-known-2');
+    });
+
+    it('still returns 201 with contribution: null when getKnowledgeAssetContribution throws (non-fatal)', async () => {
+      const ingestKnowledgeAsset = vi.fn().mockResolvedValue('asset-known-3');
+      const getKnowledgeAssetContribution = vi.fn().mockRejectedValue(new Error('db unavailable'));
+      await start(makeMockProvider(), { ingestKnowledgeAsset, getKnowledgeAssetContribution });
+      const res = await fetch(`${baseUrl}/v1/knowledge/ingest`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          asset: { ownerType: 'workspace', workspaceId: 'ws-1', assetType: 'reference', title: 'Doc' },
+          rawContent: 'x',
+        }),
+      });
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ assetId: 'asset-known-3', contribution: null });
     });
 
     it('produces a request-received and a request-completion log line (G-21 acceptance criterion)', async () => {
