@@ -10,7 +10,12 @@ and the live database rather than copying the previous entry forward — this do
 the way `IMPLEMENTATION_STATUS.md`'s own maintenance note warns about if it isn't kept honest.
 
 **Last verified against:** `intelligenceOS` @ `f5c17ee` (main), live Supabase project
-`gzimytyjtidqtudqqhfx` ("IntelligenceOS"), 2026-07-22.
+`gzimytyjtidqtudqqhfx` ("IntelligenceOS"), 2026-07-22. **2026-07-23 session (this update):** built
+on top of that same verified state via a new branch, `feat/contribution-scoring-and-cold-start-fix`
+(PR #5) — see §7/§8 and `docs/handoffs/2026-07-23_knowledge-lifecycle-completion.md` for what
+changed. Migration 008 **was** applied directly to the live project this session (Supabase
+connector; verified via `information_schema.columns` and `get_advisors` — 0 new findings) — the
+rest of §1-§6 below reflects the 2026-07-22 state and was not otherwise re-verified.
 
 ---
 
@@ -113,9 +118,28 @@ each is a **Product Question**, not an engineering task, per those documents' ow
 
 ## 6. Known Technical Debt
 
-In rough order of leverage. Items 1–2 are new findings from this review's independent validation
-pass (database inspection); items 3+ are carried forward, re-verified against source, from
+In rough order of leverage. Item 0 is a new finding from the 2026-07-23 session (live database
+inspection via the Supabase connector); items 1–2 are from the 2026-07-22 review's independent
+validation pass; items 3+ are carried forward, re-verified against source at that time, from
 `IMPLEMENTATION_STATUS.md` §5.
+
+0. **Confirmed live: at least one workspace's profile is silently stale because of the cold-start
+   race `feat/contribution-scoring-and-cold-start-fix` (PR #5) fixes.** Direct query,
+   2026-07-23: workspace `eaf3bd49-d1a0-4473-8832-10a32e1dfd8b` has 5 current
+   `intelligence.knowledge_assets` rows created between `03:18:27` and `03:18:46` UTC, but its
+   `intelligence.profiles` row (`version: 1`, `is_current: true`) has `updated_at == created_at`
+   (`03:18:28`) — created once, at the very start of that 19-second burst, and never rebuilt since.
+   This is exactly the thundering-herd failure mode the PR fixes: one of the ~5 concurrent
+   cold-start `rebuildForSubject()` calls won the race, the other ~4 hit
+   `ProfileVersionConflictError`, exhausted their retry budget, and were never retried again by
+   anything — so 4 of this workspace's 5 knowledge assets have never contributed to its profile.
+   **Not hand-patched via SQL** (would require re-deriving profile content outside the actual
+   `ProfileBuilder` aggregation logic — exactly the kind of shortcut this project's instructions
+   rule out). Self-heals automatically once PR #5 ships: the next ingestion (or Learning) event for
+   this Subject will trigger a correct rebuild that reads all 5 current assets, per
+   `rebuildForSubject()`'s existing full-recompute design. If no natural trigger arrives soon after
+   deploy, a one-off manual `rebuildForSubject()` call for this Subject would force it immediately —
+   worth doing as a smoke test that the fix works end-to-end against this exact real case.
 
 1. **The Evidence/Identity Bridge has zero live corroboration to date.** Direct query of the live
    `intelligence.hypotheses` table (2026-07-22) shows two existing rows, both predating/outside the
@@ -178,15 +202,33 @@ As observed at the start of this session (`git branch -a` / `git log`, `intellig
 | `feature/knowledge-identity-evidence-bridge` | Merged into `main` via PR #2. Stale remote ref; safe to delete once confirmed merged. |
 | `fix/subject-identity-ownership` | Merged into `main` via PR #1. Stale remote ref; safe to delete once confirmed merged. |
 | `docs/architecture-review-and-bootstrap` | **New, this session.** Adds this document, `docs/vision.md`, and the handoff below. Not merged — see the handoff document's recommended next steps. |
+| `feat/contribution-scoring-and-cold-start-fix` | **New, 2026-07-23 session.** PR #5, open. ProfileBuilder cold-start concurrency fix (Objective 4) + ContributionSummary (Objective 2, reframed). See `docs/handoffs/2026-07-23_knowledge-lifecycle-completion.md`. Full test suite (666/666), `check:boundaries` (0 violations), `tsc --noEmit`/build all clean as of this branch. Migration 008 applied to and verified against the live project this session. |
 
 `BOS` (companion repository) at the time of this review: `main` @ `f3fff4c`, with
 `fix/subject-identity-ownership` merged via its own PR #1 (mirrors the `intelligenceOS`-side fix on
-the consumer side). No open branches beyond `main` observed.
+the consumer side). **2026-07-23 session:** `fix/library-ingestion-contribution-ui` (PR #2, open) —
+consumes this repository's new `contribution` field, fixes the Library UI's PATCH/DELETE 405s, and
+adds the duplicate-ingestion guard on the Analyze action. Depends on this repository's PR #5.
 
 ## 8. Recommended Next Priorities
 
-Ordered by leverage relative to effort, consistent with `IMPLEMENTATION_STATUS.md` §6 and
-`docs/vision.md` §5, with this review's findings folded in:
+**2026-07-23 additions (highest leverage right now):**
+
+0. **Merge PR #5 and PR #2 (`BOS`) together** — they're interdependent (BOS's `contribution` field
+   is null until #5 ships). Once merged and deployed, confirm workspace
+   `eaf3bd49-d1a0-4473-8832-10a32e1dfd8b` (§6 item 0) self-heals on its next ingestion, or trigger
+   one manually as a smoke test — this is a real, live, currently-broken case to validate against,
+   not a synthetic one.
+1. **Build Objective 2's Phase 2** (evidence-candidate generation → a "corroboration progress"
+   readout, distinct from the contribution score PR #5 already ships) — scoped in the handoff doc
+   but deliberately not built this session; see there for why.
+2. **Consider a Learning-side trailing rebuild scheduler**, mirroring G-7's Knowledge-side one —
+   `shouldRebuildForSubject`'s in-flight guard (PR #5) is narrower than
+   `shouldRebuildForSubjectFromKnowledge`'s for exactly this reason. Only worth doing if the
+   narrower fix proves insufficient in practice; see PR #5's code comments.
+
+**Carried forward from the 2026-07-22 review**, ordered by leverage relative to effort, consistent
+with `IMPLEMENTATION_STATUS.md` §6 and `docs/vision.md` §5:
 
 1. **Run the `ADR-005` live-validation script** described in §6 item 1 / the handoff document —
    highest leverage: either confirms the most recent major architectural investment works end to
