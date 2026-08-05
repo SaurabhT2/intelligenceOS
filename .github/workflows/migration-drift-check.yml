@@ -1,0 +1,110 @@
+name: Migration Drift Check
+
+# Added post-incident 2026-08-04. This is the actual systemic fix, not the
+# migration SQL alone: `ci.yml` never touched a live database (see
+# db/AGENT_CONTEXT.md's own note to that effect), and `apps/api` auto-deploys
+# on every merge to main (see docs/DEPLOYMENT.md) — so a migration file could
+# be merged and its code-dependent columns could ship to production without
+# anyone ever running the SQL. This workflow doesn't yet close that gap
+# completely (see the two follow-ups called out below the job) but it makes
+# the drift *visible on the PR*, in both directions:
+#
+#   1. schema.sql + migrations/*.sql, applied fresh to a throwaway Postgres,
+#      must succeed — catches migration files with syntax errors or that
+#      don't apply cleanly in sequence (which today nothing checks either).
+#   2. The same check-migration-drift.mjs script that Job 2 below uses
+#      against staging/production (via repository secrets) is exercised
+#      here against the fresh throwaway DB first, as a cheap self-test that
+#      the script and the migration files agree with each other.
+#
+# Follow-ups NOT covered by this workflow alone — call these out explicitly
+# to whoever owns this file next, don't let this PR's green checkmark imply
+# they're solved:
+#   - This does not stop `apps/api` auto-deploying via Vercel independently
+#     of this check passing/failing, since Vercel's deploy hook isn't gated
+#     on GitHub Actions status today. Either add this workflow as a required
+#     status check in branch protection AND route deploys through a flow
+#     that respects it, or (more directly) add a Vercel "Ignore Build Step"
+#     command that shells out to this same script against the target
+#     environment's DATABASE_URL before allowing the build to proceed.
+#   - staging/production checks (Job "check-live-drift" below) need
+#     `STAGING_DATABASE_URL` / `PRODUCTION_DATABASE_URL` repository secrets
+#     populated with a read-only connection string. Nobody has done this
+#     yet as of this PR — it's a manual one-time setup step, not something
+#     this YAML can do for you.
+
+on:
+  pull_request:
+    paths:
+      - 'packages/intelligence-os/src/db/**'
+  workflow_dispatch: {}
+  schedule:
+    # Independent of any PR — catches drift introduced by out-of-band
+    # direct SQL execution against a live project (exactly how this
+    # incident's partial migration application happened in the first
+    # place), not just drift introduced through a PR.
+    - cron: '17 6 * * *'
+
+jobs:
+  fresh-apply-and-self-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: driftcheck
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/driftcheck
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install script dependencies
+        run: npm install pg --no-save
+
+      - name: Apply schema.sql
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f packages/intelligence-os/src/db/schema.sql
+
+      - name: Apply migrations in order
+        run: |
+          for f in packages/intelligence-os/src/db/migrations/*.sql; do
+            echo "Applying $f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Self-check — freshly-applied DB must match schema.sql + migrations
+        run: node scripts/db/check-migration-drift.mjs
+
+  check-live-drift:
+    # Runs only on the schedule / manual dispatch, not on every PR — this
+    # job needs the secrets below configured first (see note above); until
+    # then it will fail loudly rather than silently no-op, which is
+    # intentional (a check that silently skips is how this incident's gap
+    # went unnoticed for 5+ days in the first place).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [staging, production]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install script dependencies
+        run: npm install pg --no-save
+      - name: Check live drift — ${{ matrix.environment }}
+        env:
+          DATABASE_URL: ${{ matrix.environment == 'staging' && secrets.STAGING_DATABASE_URL || secrets.PRODUCTION_DATABASE_URL }}
+        run: node scripts/db/check-migration-drift.mjs
