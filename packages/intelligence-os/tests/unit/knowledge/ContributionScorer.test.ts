@@ -19,10 +19,34 @@ import type {
 } from '../../../src/knowledge/types';
 
 function vocab(termCount: number): VocabularyExtractionResult {
-  return { terms: Array.from({ length: termCount }, (_, i) => ({ term: `t${i}`, taxonomyCategory: 'domain_specific_vocabulary' as const, frequency: 1 })), phrases: [], termCount, phraseCount: 0 };
+  return {
+    terms: Array.from({ length: termCount }, (_, i) => ({
+      term: `t${i}`,
+      surfaceForm: `T${i}`,
+      frequency: 1,
+      isAcronym: false,
+      isProprietary: false,
+      taxonomyCategory: 'domain_specific_vocabulary' as const,
+    })),
+    phrases: [],
+    termCount,
+    phraseCount: 0,
+  };
 }
 function frameworks(count: number): FrameworkExtractionResult {
-  return { frameworks: Array.from({ length: count }, (_, i) => ({ name: `f${i}`, category: 'analytical' as const, confidence: 0.7, detectionMethod: 'explicit' as const })), frameworkCount: count };
+  return {
+    frameworks: Array.from({ length: count }, (_, i) => ({
+      id: `framework-${i}`,
+      name: `f${i}`,
+      description: '',
+      category: 'analytical' as const,
+      detectionMethod: 'explicit' as const,
+      confidence: 0.7,
+      evidenceTerms: [],
+      isProprietary: false,
+    })),
+    frameworkCount: count,
+  };
 }
 function patterns(count: number): PatternExtractionResult {
   return { patterns: Array.from({ length: count }, (_, i) => ({ id: `p${i}`, patternType: 'structural' as const, name: `p${i}`, description: '', confidence: 0.6, elements: [], isRecurring: false, artifactTypeHint: null })), patternCount: count };
